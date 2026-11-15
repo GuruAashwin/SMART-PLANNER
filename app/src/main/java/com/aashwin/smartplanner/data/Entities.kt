@@ -1,5 +1,6 @@
 package com.aashwin.smartplanner.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -14,7 +15,7 @@ import java.time.ZoneId
 object Status {
     const val PENDING = 0
     const val DONE = 1
-    const val MISSED = 2 // a recurring occurrence that was skipped; kept in history
+    const val MISSED = 2 // only in data from version 1.0; repeating tasks now move forward instead
 }
 
 object Priority {
@@ -61,6 +62,8 @@ data class TaskEntity(
     val recType: Int = Recurrence.NONE,
     val recInterval: Int = 1,
     val recDays: Int = 0,
+    /** Day of month a monthly task belongs to (31 stays 31 after a short month). 0 = use the date. */
+    @ColumnInfo(defaultValue = "0") val recAnchor: Int = 0,
     val snoozedUntil: Long? = null,
     val postponeCount: Int = 0,
 ) {
@@ -118,6 +121,8 @@ data class HabitEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Daily reminder time in minutes after midnight, or null for none. */
+    val reminderMinutes: Int? = null,
 )
 
 @Entity(

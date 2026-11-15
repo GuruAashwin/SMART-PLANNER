@@ -30,6 +30,7 @@ object Backup {
                     put("status", t.status); put("completedAt", t.completedAt ?: JSONObject.NULL)
                     put("createdAt", t.createdAt); put("alarmEnabled", t.alarmEnabled)
                     put("recType", t.recType); put("recInterval", t.recInterval); put("recDays", t.recDays)
+                    put("recAnchor", t.recAnchor)
                     put("postponeCount", t.postponeCount)
                 })
             }
@@ -51,7 +52,12 @@ object Backup {
             categories.forEach { c -> put(JSONObject().apply { put("id", c.id); put("name", c.name) }) }
         })
         root.put("habits", JSONArray().apply {
-            habits.forEach { h -> put(JSONObject().apply { put("id", h.id); put("name", h.name); put("createdAt", h.createdAt) }) }
+            habits.forEach { h ->
+                put(JSONObject().apply {
+                    put("id", h.id); put("name", h.name); put("createdAt", h.createdAt)
+                    put("reminderMinutes", h.reminderMinutes ?: JSONObject.NULL)
+                })
+            }
         })
         root.put("habitLogs", JSONArray().apply {
             logs.forEach { l -> put(JSONObject().apply { put("habitId", l.habitId); put("day", l.day) }) }
@@ -79,6 +85,7 @@ object Backup {
                     createdAt = o.optLong("createdAt", System.currentTimeMillis()),
                     alarmEnabled = o.optBoolean("alarmEnabled"), recType = o.optInt("recType"),
                     recInterval = o.optInt("recInterval", 1), recDays = o.optInt("recDays"),
+                    recAnchor = o.optInt("recAnchor"),
                     postponeCount = o.optInt("postponeCount"),
                 )
             },
@@ -90,7 +97,7 @@ object Backup {
             },
             categories = root.optJSONArray("categories").mapObjects { o -> CategoryEntity(o.getLong("id"), o.getString("name")) },
             habits = root.optJSONArray("habits").mapObjects { o ->
-                HabitEntity(o.getLong("id"), o.getString("name"), o.optLong("createdAt", System.currentTimeMillis()))
+                HabitEntity(o.getLong("id"), o.getString("name"), o.optLong("createdAt", System.currentTimeMillis()), o.optIntOrNull("reminderMinutes"))
             },
             habitLogs = root.optJSONArray("habitLogs").mapObjects { o -> HabitLogEntity(o.getLong("habitId"), o.getLong("day")) },
         )

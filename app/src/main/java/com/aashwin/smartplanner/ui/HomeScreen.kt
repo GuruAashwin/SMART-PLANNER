@@ -4,16 +4,17 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.FilterChip
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.aashwin.smartplanner.alarm.Reliability
 import com.aashwin.smartplanner.data.Status
 import com.aashwin.smartplanner.data.TaskFull
 import com.aashwin.smartplanner.util.Fmt
@@ -47,8 +49,37 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
+private class HomeData(
+    val todays: List<TaskFull>,
+    val doneToday: List<TaskFull>,
+    val overdue: List<TaskFull>,
+    val todayPending: List<TaskFull>,
+    val next: TaskFull?,
+)
+
+private fun buildHome(tasks: List<TaskFull>, today: LocalDate, now: Long): HomeData {
+    val zone = ZoneId.systemDefault()
+    val todayDay = today.toEpochDay()
+    fun completedToday(f: TaskFull) =
+        f.task.completedAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == today } == true
+    // Today = due today, plus anything finished today (so finishing an old task counts as progress).
+    val todays = tasks.filter {
+        (it.task.status == Status.PENDING && it.task.dueDate == todayDay) ||
+            (it.task.status == Status.DONE && (it.task.dueDate == todayDay || completedToday(it)))
+    }
+    return HomeData(
+        todays = todays,
+        doneToday = todays.filter { it.task.status == Status.DONE },
+        overdue = tasks.filter { it.task.isOverdue(now) }
+            .sortedWith(compareByDescending<TaskFull> { it.task.priority }.thenBy { it.task.dueMillis() }),
+        todayPending = todays.filter { it.task.status == Status.PENDING && !it.task.isOverdue(now) },
+        next = tasks.filter { it.task.status == Status.PENDING && it.task.dueMinutes != null && (it.task.dueMillis() ?: 0) >= now }
+            .minByOrNull { it.task.dueMillis() ?: Long.MAX_VALUE },
+    )
+}
+
 @Composable
-fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
+fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> Unit) {
     val tasks by vm.tasks.collectAsState()
     val categories by vm.categories.collectAsState()
     val habits by vm.habits.collectAsState()
@@ -57,37 +88,25 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
     var resumeTick by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) { resumeTick++; onPauseOrDispose { } }
     var showDone by rememberSaveable { mutableStateOf(false) }
+    var reliabilityDone by remember { mutableStateOf(vm.prefs.reliabilityDone) }
+    val actions = rememberTaskActions(vm, onOpen)
 
     val today = LocalDate.now()
     val todayDay = today.toEpochDay()
-    val now = System.currentTimeMillis()
-    val zone = ZoneId.systemDefault()
-    val catNames = categories.associate { it.id to it.name }
-    fun completedToday(f: TaskFull) =
-        f.task.completedAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == today } == true
-
-    // Today = due today, plus anything finished today (so finishing an old task counts as progress).
-    val todays = tasks.filter {
-        it.task.status != Status.MISSED &&
-            (it.task.dueDate == todayDay || (it.task.status == Status.DONE && completedToday(it)))
-    }
-    val doneToday = todays.filter { it.task.status == Status.DONE }
-    val overdue = tasks.filter { it.task.isOverdue(now) }
-        .sortedWith(compareByDescending<TaskFull> { it.task.priority }.thenBy { it.task.dueMillis() })
-    val todayPending = todays.filter { it.task.status == Status.PENDING && !it.task.isOverdue(now) }
-    val next = tasks.filter { it.task.status == Status.PENDING && it.task.dueMinutes != null && (it.task.dueMillis() ?: 0) >= now }
-        .minByOrNull { it.task.dueMillis() ?: Long.MAX_VALUE }
+    // Recomputed only when the data changes or the screen comes back, not on every frame.
+    val d = remember(tasks, resumeTick) { buildHome(tasks, today, System.currentTimeMillis()) }
+    val catNames = remember(categories) { categories.associate { it.id to it.name } }
     val notificationsOn = remember(resumeTick) { NotificationManagerCompat.from(ctx).areNotificationsEnabled() }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        Spacer(Modifier.height(20.dp))
-        Text(
-            Fmt.greeting() + if (name.isNotBlank()) ", $name" else "",
-            style = MaterialTheme.typography.headlineSmall,
-        )
-        Text(Fmt.longDay(today), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 96.dp)) {
+        item {
+            Column {
+                Text(Fmt.greeting() + if (name.isNotBlank()) ", $name" else "", style = MaterialTheme.typography.headlineSmall)
+                Text(Fmt.longDay(today), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
 
-        if (!notificationsOn) {
+        if (!notificationsOn) item {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Notifications are off. Reminders and alarms can't alert you.",
@@ -95,54 +114,75 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = {
-                    ctx.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-                    )
+                    ctx.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName))
                 }) { Text("Turn on") }
             }
         }
 
-        Surface(
-            Modifier.fillMaxWidth().padding(top = 16.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.Bottom) {
+        // One-time setup card: many phones block alarms until the app is allowed to run in the background.
+        if (!reliabilityDone) item {
+            Surface(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Make alarms reliable", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (todays.isEmpty()) "Nothing due today" else "${doneToday.size} of ${todays.size} done",
-                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                        (Reliability.brand?.let { "${it.name} phones" } ?: "Many phones") +
+                            " can block alarms to save battery. A 1-minute setup fixes it.",
+                        style = MaterialTheme.typography.bodySmall,
                     )
-                    if (overdue.isNotEmpty()) Text(
-                        "${overdue.size} overdue", style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (todays.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { doneToday.size.toFloat() / todays.size },
-                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                        drawStopIndicator = {},
-                        gapSize = 0.dp,
-                    )
-                }
-                next?.let {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Next", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    Text(
-                        "${it.task.title} · ${Fmt.due(it.task.date, it.task.dueMinutes)}",
-                        style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
-                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { reliabilityDone = true; vm.prefs.reliabilityDone = true }) { Text("Later") }
+                        TextButton(onClick = onOpenSettings) { Text("Set up") }
+                    }
                 }
             }
         }
 
-        if (habits.isNotEmpty()) {
+        item {
+            Surface(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            if (d.todays.isEmpty()) "Nothing due today" else "${d.doneToday.size} of ${d.todays.size} done",
+                            style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                        )
+                        if (d.overdue.isNotEmpty()) Text(
+                            "${d.overdue.size} overdue", style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (d.todays.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { d.doneToday.size.toFloat() / d.todays.size },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            drawStopIndicator = {},
+                            gapSize = 0.dp,
+                        )
+                    }
+                    d.next?.let {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Next", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "${it.task.title} · ${Fmt.due(it.task.date, it.task.dueMinutes)}",
+                            style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (habits.isNotEmpty()) item { Column {
             SectionTitle("Habits")
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(habits.size) { i ->
-                    val h = habits[i]
+                items(habits, key = { it.habit.id }) { h ->
                     val doneHabit = h.logs.any { it.day == todayDay }
                     FilterChip(
                         selected = doneHabit,
@@ -154,25 +194,32 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
                     )
                 }
             }
-        }
+        } }
 
-        if (overdue.isNotEmpty()) {
-            SectionTitle("Overdue") {
-                TextButton(onClick = { vm.moveToToday(overdue.map { it.task.id }) }) { Text("Move all to today") }
+        if (d.overdue.isNotEmpty()) {
+            item(key = "h-overdue") {
+                SectionTitle("Overdue") {
+                    TextButton(onClick = { vm.moveToToday(d.overdue.map { it.task.id }) }) { Text("Move all to today") }
+                }
             }
-            TaskList(overdue, vm, catNames, onOpen)
+            taskItems(d.overdue, catNames, actions, "o")
         }
 
-        SectionTitle("Today")
-        if (todayPending.isEmpty()) EmptyHint(if (todays.isEmpty()) "Tap + to plan something." else "All clear for today.")
-        TaskList(todayPending, vm, catNames, onOpen)
-
-        if (doneToday.isNotEmpty()) {
-            SectionTitle("Done · ${doneToday.size}") {
-                TextButton(onClick = { showDone = !showDone }) { Text(if (showDone) "Hide" else "Show") }
+        item(key = "h-today") {
+            Column {
+                SectionTitle("Today")
+                if (d.todayPending.isEmpty()) EmptyHint(if (d.todays.isEmpty()) "Tap + to plan something." else "All clear for today.")
             }
-            if (showDone) TaskList(doneToday, vm, catNames, onOpen)
         }
-        Spacer(Modifier.height(96.dp))
+        taskItems(d.todayPending, catNames, actions, "t")
+
+        if (d.doneToday.isNotEmpty()) {
+            item(key = "h-done") {
+                SectionTitle("Done · ${d.doneToday.size}") {
+                    TextButton(onClick = { showDone = !showDone }) { Text(if (showDone) "Hide" else "Show") }
+                }
+            }
+            if (showDone) taskItems(d.doneToday, catNames, actions, "d")
+        }
     }
 }

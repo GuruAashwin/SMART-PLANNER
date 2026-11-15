@@ -1,5 +1,6 @@
 package com.aashwin.smartplanner.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -153,10 +154,13 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
     var newCatDialog by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var titleError by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    var initialState by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(taskId) {
         if (isNew) {
             if (draft?.minutes != null && vm.prefs.defaultReminder >= 0) reminders.add(vm.prefs.defaultReminder)
+            initialState = "new"
             return@LaunchedEffect
         }
         val full = vm.repo.getTask(taskId) ?: run { onClose(); return@LaunchedEffect }
@@ -169,6 +173,20 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         subtasks.clear(); subtasks.addAll(full.sortedSubtasks)
         loaded = true
     }
+
+    /** Fingerprint of everything editable, to notice unsaved changes. */
+    fun currentState(): String = listOf(
+        title, description, date, minutes, priority, categoryId, alarm, recType, recInterval, recDays,
+        reminders.sorted(), subtasks.map { it.title to it.done }, newSub,
+    ).toString()
+    LaunchedEffect(loaded, original) { if (loaded && initialState != "new" && original != null) initialState = currentState() }
+    fun isDirty(): Boolean = when (initialState) {
+        null -> false
+        "new" -> title.isNotBlank() || subtasks.isNotEmpty() || description.isNotBlank()
+        else -> currentState() != initialState
+    }
+    fun leave() { if (isDirty()) confirmDiscard = true else onClose() }
+    BackHandler(enabled = true) { leave() }
 
     fun setTime(m: Int?) {
         val hadNoTime = minutes == null
@@ -192,6 +210,9 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             snoozedUntil = if (dateChanged) null else base.snoozedUntil,
             // A new date counts as a fresh plan: the "postponed" hint resets.
             postponeCount = if (dateChanged && original != null) 0 else base.postponeCount,
+            // New date or new rule = the monthly day follows the date picked now.
+            recAnchor = if (recType == Recurrence.MONTHLY && (dateChanged || base.recType != Recurrence.MONTHLY)) (d?.dayOfMonth ?: 0)
+                else if (recType == Recurrence.MONTHLY) base.recAnchor else 0,
         )
         vm.save(task, subtasks.toList(), if (task.dueMinutes == null) emptyList() else reminders.toList())
         onClose()
@@ -207,7 +228,7 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         topBar = {
             TopAppBar(
                 title = { },
-                navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { IconButton(onClick = { leave() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     if (!isNew) Box {
                         IconButton(onClick = { moreMenu = true }) { Icon(Icons.Filled.MoreVert, "More actions") }
@@ -215,8 +236,7 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                             if (original?.status == Status.PENDING) DropdownMenuItem(
                                 text = { Text("Postpone 1 day") }, onClick = { moreMenu = false; vm.postpone(taskId); onClose() },
                             )
-                            DropdownMenuItem(text = { Text("Duplicate") }, onClick = { moreMenu = false; vm.duplicate(taskId); onClose() })
-                            DropdownMenuItem(text = { Text("Delete") }, onClick = { moreMenu = false; confirmDelete = true })
+                            DropdownMenuItem(text = { Text("Delete") }, onClick = { moreMenu = false; vm.delete(taskId); onClose() })
                         }
                     }
                 },
@@ -287,6 +307,13 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                         if (minutes != null) IconButton(onClick = { setTime(null) }) { Icon(Icons.Filled.Close, "Remove time") }
                     }
                 }
+            }
+            if (date != null && minutes == null) {
+                Text(
+                    "No time set: it will be in your morning summary. Add a time for reminders or an alarm.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 42.dp, bottom = 4.dp),
+                )
             }
             // ---- reminders + alarm (need a time) ----
             if (date != null && minutes != null) {
@@ -451,6 +478,15 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             vm.addCategory(name) { id -> categoryId = id }
             newCatDialog = false
         }
+    }
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Save changes?") },
+            text = { Text("You have changes that aren't saved yet.") },
+            confirmButton = { TextButton(onClick = { confirmDiscard = false; save() }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false; onClose() }) { Text("Discard") } },
+        )
     }
     if (confirmDelete) {
         ConfirmDelete(title, { vm.delete(taskId); onClose() }, { confirmDelete = false })

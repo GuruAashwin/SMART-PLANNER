@@ -24,18 +24,30 @@ class Prefs(context: Context) {
         get() = sp.getInt("defaultSnooze", 10)
         set(v) = sp.edit().putInt("defaultSnooze", v).apply()
 
-    /** Hour your day starts; used for the daily roll-over of recurring tasks. */
+    /**
+     * Hour your day really starts (default 4 AM). Until then, yesterday's repeating
+     * tasks can still be completed, e.g. finishing "Study" at 12:30 AM.
+     */
     var dayStartHour: Int
-        get() = sp.getInt("dayStartHour", 0)
+        get() = sp.getInt("dayStartHour", 4)
         set(v) = sp.edit().putInt("dayStartHour", v).apply()
+
+    /** Morning summary of today's tasks (covers tasks that have a date but no time). */
+    var summaryEnabled: Boolean
+        get() = sp.getBoolean("summaryEnabled", true)
+        set(v) = sp.edit().putBoolean("summaryEnabled", v).apply()
+
+    var summaryMinutes: Int
+        get() = sp.getInt("summaryMinutes", 8 * 60)
+        set(v) = sp.edit().putInt("summaryMinutes", v).apply()
+
+    var reliabilityDone: Boolean
+        get() = sp.getBoolean("reliabilityDone", false)
+        set(v) = sp.edit().putBoolean("reliabilityDone", v).apply()
 
     var alarmToneUri: String?
         get() = sp.getString("alarmTone", null)
         set(v) = sp.edit().putString("alarmTone", v).apply()
-
-    var alarmChannelVersion: Int
-        get() = sp.getInt("alarmChannelVersion", 1)
-        set(v) = sp.edit().putInt("alarmChannelVersion", v).apply()
 
     fun setName(v: String) { sp.edit().putString("name", v).apply(); _name.value = v }
     fun setTheme(v: Int) { sp.edit().putInt("theme", v).apply(); _theme.value = v }

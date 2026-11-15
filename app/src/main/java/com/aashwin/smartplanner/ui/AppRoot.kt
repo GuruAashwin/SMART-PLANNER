@@ -30,6 +30,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +56,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import java.time.LocalDate
+import kotlinx.coroutines.flow.collectLatest
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -76,6 +81,19 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
     var quickAdd by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf<Draft?>(null) }
     var calendarDay by remember { mutableStateOf(LocalDate.now()) }
+    val snackbar = remember { SnackbarHostState() }
+
+    // Completed / deleted / moved messages, with Undo where possible. A new one replaces the old.
+    LaunchedEffect(Unit) {
+        vm.messages.collectLatest { m ->
+            val result = snackbar.showSnackbar(
+                message = m.text,
+                actionLabel = if (m.undo != null) "Undo" else null,
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) m.undo?.let { vm.undo(it) }
+        }
+    }
 
     LaunchedEffect(openTaskId) {
         if (openTaskId != null && openTaskId > 0) {
@@ -85,21 +103,21 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
     }
 
     fun openEditor(id: Long) { draft = null; nav.navigate("edit/$id") }
+    fun openTab(r: String) = nav.navigate(r) {
+        popUpTo("home") { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (!route.startsWith("edit")) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                     TABS.forEach { tab ->
                         NavigationBarItem(
                             selected = route == tab.route,
-                            onClick = {
-                                nav.navigate(tab.route) {
-                                    popUpTo("home") { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            onClick = { openTab(tab.route) },
                             icon = { Icon(tab.icon, null) },
                             label = { Text(tab.label) },
                         )
@@ -120,7 +138,7 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
         },
     ) { pad ->
         NavHost(nav, startDestination = "home", modifier = Modifier.padding(pad)) {
-            composable("home") { HomeScreen(vm, ::openEditor) }
+            composable("home") { HomeScreen(vm, ::openEditor, onOpenSettings = { openTab("settings") }) }
             composable("tasks") { TasksScreen(vm, ::openEditor) }
             composable("habits") { HabitsScreen(vm) }
             composable("calendar") {
@@ -136,9 +154,11 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
 
     if (quickAdd) {
         if (route == "habits") {
-            TextInputDialog("New habit", "e.g. Exercise, Reading, Drink water", onDismiss = { quickAdd = false }) {
-                vm.addHabit(it); quickAdd = false
-            }
+            HabitDialog(
+                initialName = "", initialReminder = null, isNew = true,
+                onDismiss = { quickAdd = false }, onDelete = {},
+                onSave = { name, rem -> vm.addHabit(name, rem); quickAdd = false },
+            )
         } else {
             QuickAddDialog(
                 vm,

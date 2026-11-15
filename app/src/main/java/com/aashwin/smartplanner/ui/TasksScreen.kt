@@ -4,7 +4,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,13 +57,14 @@ fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
     var priority by rememberSaveable { mutableStateOf(-1) }
     var categoryId by rememberSaveable { mutableStateOf(-1L) }
     var menu by remember { mutableStateOf(false) }
+    val actions = rememberTaskActions(vm, onOpen)
 
     val now = System.currentTimeMillis()
     val today = LocalDate.now().toEpochDay()
-    val catNames = categories.associate { it.id to it.name }
+    val catNames = remember(categories) { categories.associate { it.id to it.name } }
     val extraFilters = (if (priority != -1) 1 else 0) + (if (categoryId != -1L) 1 else 0)
 
-    val shown = tasks.filter { f ->
+    val shown = remember(tasks, query, filter, priority, categoryId) { tasks.filter { f ->
         val t = f.task
         val q = query.trim()
         (q.isEmpty() || t.title.contains(q, true) || t.description.contains(q, true) ||
@@ -78,7 +81,7 @@ fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
             }
     }.let { list ->
         if (filter == "Done") list.sortedByDescending { it.task.completedAt ?: it.task.createdAt } else list
-    }
+    } }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         TextField(
@@ -153,10 +156,9 @@ fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
                 TextButton(onClick = { priority = -1; categoryId = -1L }) { Text("Clear") }
             }
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            if (shown.isEmpty()) EmptyHint(if (query.isNotBlank()) "No tasks match \"$query\"." else "Nothing here.")
-            TaskList(shown, vm, catNames, onOpen)
-            Spacer(Modifier.height(96.dp))
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
+            if (shown.isEmpty()) item { EmptyHint(if (query.isNotBlank()) "No tasks match \"$query\"." else "Nothing here.") }
+            taskItems(shown, catNames, actions, filter)
         }
     }
 }

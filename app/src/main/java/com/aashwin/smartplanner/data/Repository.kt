@@ -8,6 +8,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+
+/** What an Undo needs: the task as it was, and anything the action created. */
+class Undo(val snapshot: TaskFull, val createdId: Long?)
 
 /** All business rules live here, so the UI, notifications and alarm screen behave the same way. */
 class Repository(
@@ -30,12 +35,8 @@ class Repository(
 
     suspend fun getTask(id: Long): TaskFull? = dao.getTaskFull(id)
 
-    suspend fun seedDefaults() {
-        if (dao.categoryCount() == 0) {
-            listOf("College", "Coding", "Fitness", "Personal", "Projects", "Important")
-                .forEach { dao.insertCategory(CategoryEntity(name = it)) }
-        }
-    }
+    /** The "day" in the user's sense: before the day-start hour (default 4 AM) it is still yesterday. */
+    fun logicalToday(): LocalDate = LocalDateTime.now().minusHours(prefs.dayStartHour.toLong()).toLocalDate()
 
     // ---------------- tasks ----------------
 
@@ -43,7 +44,10 @@ class Repository(
     suspend fun saveTask(task: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long =
         lock.withLock { saveInternal(task, subtasks, reminderOffsets) }
 
-    private suspend fun saveInternal(task: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long {
+    private suspend fun saveInternal(input: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long {
+        // Monthly tasks remember their day of month, so the 31st doesn't drift to the 28th.
+        val task = if (input.recType == Recurrence.MONTHLY && input.recAnchor == 0 && input.date != null)
+            input.copy(recAnchor = input.date!!.dayOfMonth) else input
         val old = if (task.id != 0L) dao.getTaskFull(task.id) else null
         old?.let { cancelAlerts(it) }
         val id = db.withTransaction {
@@ -71,32 +75,39 @@ class Repository(
 
     /**
      * Completion: status, time, cancel reminders + alarm, then create the next
-     * occurrence for recurring tasks.
+     * occurrence for recurring tasks. Returns what Undo needs.
      */
-    suspend fun completeTask(id: Long, completeSubtasks: Boolean) = lock.withLock { completeInternal(id, completeSubtasks) }
+    suspend fun completeTask(id: Long, completeSubtasks: Boolean): Undo? = lock.withLock {
+        val before = dao.getTaskFull(id) ?: return@withLock null
+        if (before.task.status == Status.DONE) return@withLock null
+        val created = completeInternal(id, completeSubtasks)
+        Undo(before, created)
+    }
 
-    private suspend fun completeInternal(id: Long, completeSubtasks: Boolean) {
-        val full = dao.getTaskFull(id) ?: return
-        if (full.task.status == Status.DONE) return
+    /** Returns the id of the next occurrence it created, if any. */
+    private suspend fun completeInternal(id: Long, completeSubtasks: Boolean): Long? {
+        val full = dao.getTaskFull(id) ?: return null
+        if (full.task.status == Status.DONE) return null
         cancelAlerts(full)
         if (completeSubtasks) dao.completeAllSubtasks(id)
         dao.updateTask(
             full.task.copy(status = Status.DONE, completedAt = System.currentTimeMillis(), snoozedUntil = null)
         )
-        createNextOccurrence(full)
+        return createNextOccurrence(full)
     }
 
-    private suspend fun createNextOccurrence(full: TaskFull) {
+    private suspend fun createNextOccurrence(full: TaskFull): Long? {
         val t = full.task
-        if (!t.isRecurring) return
-        val next = RecurrenceCalc.nextOccurrence(t, LocalDate.now()) ?: return
+        if (!t.isRecurring) return null
+        val next = RecurrenceCalc.nextOccurrence(t, logicalToday()) ?: return null
         val newTask = t.copy(
             id = 0, dueDate = next.toEpochDay(), status = Status.PENDING, completedAt = null,
             createdAt = System.currentTimeMillis(), snoozedUntil = null, postponeCount = 0,
         )
-        saveInternal(newTask, full.sortedSubtasks.map { it.copy(done = false) }, full.reminders.map { it.offsetMinutes })
+        val newId = saveInternal(newTask, full.sortedSubtasks.map { it.copy(done = false) }, full.reminders.map { it.offsetMinutes })
         // the old occurrence stops being "recurring" so it never spawns twice
         dao.getTask(t.id)?.let { dao.updateTask(it.copy(recType = Recurrence.NONE)) }
+        return newId
     }
 
     suspend fun uncompleteTask(id: Long) = lock.withLock {
@@ -106,24 +117,12 @@ class Repository(
         Scheduler.schedule(ctx, t, full.reminders)
     }
 
-    suspend fun toggleSubtask(subId: Long) = lock.withLock {
-        val s = dao.getSubtask(subId) ?: return@withLock
-        dao.updateSubtask(s.copy(done = !s.done))
-        val full = dao.getTaskFull(s.taskId) ?: return@withLock
-        if (full.task.status == Status.PENDING && full.subtasks.isNotEmpty() && full.subtasks.all { it.done }) {
-            completeInternal(full.task.id, completeSubtasks = false)
-        }
-    }
-
-    /** Snooze never completes the task; it only schedules another alert. */
+    /** Snooze never completes the task; it only schedules another alert (and is not counted as postponing). */
     suspend fun snooze(id: Long, minutes: Int) = lock.withLock {
         val full = dao.getTaskFull(id) ?: return@withLock
         if (full.task.status != Status.PENDING) return@withLock
         Notifier.cancel(ctx, id)
-        val t = full.task.copy(
-            snoozedUntil = System.currentTimeMillis() + minutes * 60_000L,
-            postponeCount = full.task.postponeCount + 1,
-        )
+        val t = full.task.copy(snoozedUntil = System.currentTimeMillis() + minutes * 60_000L)
         dao.updateTask(t)
         Scheduler.schedule(ctx, t, emptyList())
     }
@@ -133,7 +132,7 @@ class Repository(
         if (t.snoozedUntil != null) dao.updateTask(t.copy(snoozedUntil = null))
     }
 
-    suspend fun dismissAlarm(id: Long) = Notifier.cancel(ctx, id)
+    fun dismissAlarm(id: Long) = Notifier.cancel(ctx, id)
 
     suspend fun reschedule(id: Long, date: LocalDate?, minutes: Int?) = lock.withLock { rescheduleInternal(id, date, minutes) }
 
@@ -156,7 +155,7 @@ class Repository(
 
     /** "Move to today" for overdue tasks. A time that has already passed today is dropped (due by end of day). */
     suspend fun moveToToday(ids: List<Long>) = lock.withLock {
-        val nowMin = java.time.LocalTime.now().let { it.hour * 60 + it.minute }
+        val nowMin = LocalTime.now().let { it.hour * 60 + it.minute }
         for (id in ids) {
             val t = dao.getTask(id) ?: continue
             if (t.status != Status.PENDING) continue
@@ -165,36 +164,62 @@ class Repository(
         }
     }
 
-    suspend fun duplicate(id: Long): Long? = lock.withLock {
+    suspend fun deleteTask(id: Long): Undo? = lock.withLock {
         val full = dao.getTaskFull(id) ?: return@withLock null
-        saveInternal(
-            full.task.copy(id = 0, title = full.task.title + " (copy)", status = Status.PENDING, completedAt = null,
-                createdAt = System.currentTimeMillis(), snoozedUntil = null, postponeCount = 0),
-            full.sortedSubtasks.map { it.copy(done = false) },
-            full.reminders.map { it.offsetMinutes },
-        )
+        cancelAlerts(full)
+        dao.deleteTask(id)
+        Undo(full, null)
     }
 
-    suspend fun deleteTask(id: Long) = lock.withLock {
-        dao.getTaskFull(id)?.let { cancelAlerts(it) }
-        dao.deleteTask(id)
+    /** Puts a task back exactly as it was before Complete or Delete. */
+    suspend fun undo(u: Undo) = lock.withLock {
+        u.createdId?.let { cid ->
+            dao.getTaskFull(cid)?.let { cancelAlerts(it) }
+            dao.deleteTask(cid)
+        }
+        val f = u.snapshot
+        db.withTransaction {
+            if (dao.getTask(f.task.id) != null) dao.updateTask(f.task) else dao.putTasks(listOf(f.task))
+            dao.deleteSubtasks(f.task.id); dao.putSubtasks(f.subtasks)
+            dao.deleteReminders(f.task.id); dao.putReminders(f.reminders)
+        }
+        Scheduler.schedule(ctx, f.task, f.reminders)
+    }
+
+    /** Creates a real task that rings its alarm in about 2 minutes, to check the phone lets alarms through. */
+    suspend fun createTestAlarm(): LocalDateTime = lock.withLock {
+        val at = LocalDateTime.now().plusMinutes(2).withSecond(0).withNano(0)
+        saveInternal(
+            TaskEntity(
+                title = "Test alarm", description = "Created from Settings to check alarms work. Complete it or delete it.",
+                dueDate = at.toLocalDate().toEpochDay(), dueMinutes = at.hour * 60 + at.minute, alarmEnabled = true,
+            ),
+            emptyList(), emptyList(),
+        )
+        at
     }
 
     // ---------------- daily handling ----------------
 
     /**
      * Run at the start of each day (and on app start). Unfinished one-time tasks stay
-     * overdue. Unfinished recurring occurrences from earlier days are kept as "missed"
-     * in history, and the next occurrence is created.
+     * overdue. An unfinished repeating task simply moves to its next date (checklist reset),
+     * so it never piles up copies.
      */
     suspend fun rollover() = lock.withLock {
-        val today = LocalDate.now().toEpochDay()
+        val today = logicalToday()
         dao.allTasksFull()
-            .filter { it.task.status == Status.PENDING && it.task.isRecurring && (it.task.dueDate ?: today) < today }
+            .filter { it.task.status == Status.PENDING && it.task.isRecurring && it.task.dueDate != null && it.task.dueDate < today.toEpochDay() }
             .forEach { full ->
                 cancelAlerts(full)
-                dao.updateTask(full.task.copy(status = Status.MISSED))
-                createNextOccurrence(full)
+                val next = RecurrenceCalc.nextOccurrence(full.task, today) ?: return@forEach
+                val moved = full.task.copy(dueDate = next.toEpochDay(), snoozedUntil = null, postponeCount = 0)
+                dao.updateTask(moved)
+                if (full.subtasks.any { it.done }) {
+                    dao.deleteSubtasks(moved.id)
+                    dao.insertSubtasks(full.sortedSubtasks.map { it.copy(id = 0, done = false) })
+                }
+                Scheduler.schedule(ctx, moved, full.reminders)
             }
         Scheduler.scheduleRollover(ctx, prefs.dayStartHour)
     }
@@ -206,6 +231,23 @@ class Repository(
         dao.allTasksFull().filter { it.task.status == Status.PENDING }
             .forEach { Scheduler.schedule(ctx, it.task, it.reminders) }
         Scheduler.scheduleRollover(ctx, prefs.dayStartHour)
+        scheduleSummary()
+        dao.allHabits().forEach { Scheduler.scheduleHabit(ctx, it) }
+    }
+
+    fun scheduleSummary() {
+        if (prefs.summaryEnabled) Scheduler.scheduleSummary(ctx, prefs.summaryMinutes) else Scheduler.cancelSummary(ctx)
+    }
+
+    /** Morning summary: covers tasks with a date but no time, which have no reminder of their own. */
+    suspend fun showSummary() {
+        val now = System.currentTimeMillis()
+        val today = LocalDate.now().toEpochDay()
+        val all = dao.allTasksFull().map { it.task }.filter { it.status == Status.PENDING }
+        val todays = all.filter { it.dueDate == today }.sortedWith(compareBy({ it.dueMinutes ?: Int.MAX_VALUE }, { -it.priority }))
+        val overdue = all.count { it.isOverdue(now) && it.dueDate != today }
+        if (todays.isNotEmpty() || overdue > 0) Notifier.showSummary(ctx, todays, overdue)
+        scheduleSummary()
     }
 
     // ---------------- categories ----------------
@@ -215,11 +257,37 @@ class Repository(
 
     // ---------------- habits ----------------
 
-    suspend fun addHabit(name: String) { dao.insertHabit(HabitEntity(name = name.trim())) }
-    suspend fun deleteHabit(id: Long) = dao.deleteHabit(id)
+    suspend fun addHabit(name: String, reminderMinutes: Int?) {
+        val id = dao.insertHabit(HabitEntity(name = name.trim(), reminderMinutes = reminderMinutes))
+        dao.getHabit(id)?.let { Scheduler.scheduleHabit(ctx, it) }
+    }
+
+    suspend fun updateHabit(id: Long, name: String, reminderMinutes: Int?) {
+        val h = dao.getHabit(id) ?: return
+        val updated = h.copy(name = name.trim(), reminderMinutes = reminderMinutes)
+        dao.updateHabit(updated)
+        Scheduler.cancelHabit(ctx, id)
+        Scheduler.scheduleHabit(ctx, updated)
+    }
+
+    suspend fun deleteHabit(id: Long) {
+        Scheduler.cancelHabit(ctx, id)
+        Notifier.cancelHabit(ctx, id)
+        dao.deleteHabit(id)
+    }
+
     suspend fun setHabitDone(habitId: Long, day: LocalDate, done: Boolean) {
         if (done) dao.insertHabitLog(HabitLogEntity(habitId, day.toEpochDay()))
         else dao.deleteHabitLog(habitId, day.toEpochDay())
+        if (done && day == LocalDate.now()) Notifier.cancelHabit(ctx, habitId)
+    }
+
+    /** Daily habit reminder: only shown if the habit isn't done yet today. */
+    suspend fun habitAlert(habitId: Long) {
+        val h = dao.getHabit(habitId) ?: return
+        if (h.reminderMinutes == null) return
+        if (dao.habitDoneCount(habitId, LocalDate.now().toEpochDay()) == 0) Notifier.showHabit(ctx, h)
+        Scheduler.scheduleHabit(ctx, h)
     }
 
     // ---------------- backup ----------------
@@ -232,6 +300,7 @@ class Repository(
     suspend fun importJson(json: String) = lock.withLock {
         val data = Backup.fromJson(json)
         dao.allTasksFull().forEach { cancelAlerts(it) }
+        dao.allHabits().forEach { Scheduler.cancelHabit(ctx, it.id) }
         db.withTransaction {
             dao.clearTasks(); dao.clearCategories(); dao.clearHabits()
             dao.putCategories(data.categories)
@@ -242,5 +311,10 @@ class Repository(
             dao.putHabitLogs(data.habitLogs)
         }
         rescheduleAllInternal()
+    }
+
+    /** Called when a task's alarm stops ringing on its own after the time limit. */
+    fun alarmTimedOut(task: TaskEntity) {
+        Notifier.showMissedAlarm(ctx, task, prefs)
     }
 }

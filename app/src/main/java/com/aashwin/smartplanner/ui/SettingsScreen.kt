@@ -54,7 +54,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import com.aashwin.smartplanner.alarm.Notifier
+import com.aashwin.smartplanner.alarm.Reliability
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Switch
 import com.aashwin.smartplanner.alarm.Scheduler
 import com.aashwin.smartplanner.data.Prefs
 import com.aashwin.smartplanner.util.Fmt
@@ -103,6 +106,9 @@ fun SettingsScreen(vm: MainViewModel) {
     var defaultReminder by remember { mutableIntStateOf(prefs.defaultReminder) }
     var defaultSnooze by remember { mutableIntStateOf(prefs.defaultSnooze) }
     var dayStart by remember { mutableIntStateOf(prefs.dayStartHour) }
+    var summaryOn by remember { mutableStateOf(prefs.summaryEnabled) }
+    var summaryAt by remember { mutableIntStateOf(prefs.summaryMinutes) }
+    var pickSummary by remember { mutableStateOf(false) }
     var toneName by remember { mutableStateOf(toneTitle(ctx, prefs.alarmToneUri)) }
     var addCat by remember { mutableStateOf(false) }
     var deleteCat by remember { mutableStateOf<Long?>(null) }
@@ -113,7 +119,7 @@ fun SettingsScreen(vm: MainViewModel) {
     val toneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         val uri = res.data?.let { IntentCompat.getParcelableExtra(it, RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java) }
         if (uri != null) {
-            Notifier.changeAlarmTone(ctx, prefs, uri.toString())
+            prefs.alarmToneUri = uri.toString()
             toneName = toneTitle(ctx, uri.toString())
         }
     }
@@ -186,9 +192,24 @@ fun SettingsScreen(vm: MainViewModel) {
             { if (it < 0) "None" else Fmt.offset(it) }) { defaultReminder = it; prefs.defaultReminder = it }
         PickerRow("Snooze length", defaultSnooze, listOf(5, 10, 15, 30, 60),
             { if (it == 60) "1 hour" else "$it min" }) { defaultSnooze = it; prefs.defaultSnooze = it }
-        PickerRow("Day starts at", dayStart, (0..8).toList(), { Fmt.time(it * 60) }) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Morning summary")
+                Text(
+                    "Today's tasks in one notification, including ones with no time",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (summaryOn) TextButton(onClick = { pickSummary = true }) { Text(Fmt.time(summaryAt)) }
+            Switch(checked = summaryOn, onCheckedChange = { summaryOn = it; prefs.summaryEnabled = it; vm.scheduleSummary() })
+        }
+        PickerRow("New day starts at", dayStart, (0..6).toList(), { Fmt.time(it * 60) }) {
             dayStart = it; prefs.dayStartHour = it; vm.rescheduleAll()
         }
+        Text(
+            "Until then, yesterday's repeating tasks can still be ticked off (e.g. finishing at 12:30 AM).",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Alarm sound", Modifier.weight(1f))
             OutlinedButton(onClick = {
@@ -202,9 +223,9 @@ fun SettingsScreen(vm: MainViewModel) {
             }) { Text(toneName) }
         }
 
-        SectionTitle("Permissions")
+        SectionTitle("Make alarms reliable")
         Text(
-            "These let reminders and alarms work even when the app is closed.",
+            "These let reminders and alarms work when the app is closed and after a restart.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         PermissionRow("Notifications", "Required to remind you about your scheduled tasks.", notifOk) {
@@ -217,9 +238,34 @@ fun SettingsScreen(vm: MainViewModel) {
         PermissionRow("Full-screen alarms", "Shows the alarm screen over the lock screen.", fullScreenOk) {
             if (Build.VERSION.SDK_INT >= 34) open(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkgUri))
         }
-        PermissionRow("Unrestricted battery", "Stops the phone from delaying alerts to save battery. Recommended on Xiaomi, Oppo, Vivo, Realme and Samsung.", batteryOk) {
+        PermissionRow("Unrestricted battery", "Stops the phone from delaying alerts to save battery.", batteryOk) {
             @Suppress("BatteryLife")
             open(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri))
+        }
+        Reliability.brand?.let { b ->
+            // The phone gives no way to check this switch, so it is shown as a step to do once.
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Info, null, tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("${b.autostartLabel} (${b.name})", fontWeight = FontWeight.Medium)
+                    Text(b.steps, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { prefs.reliabilityDone = true; Reliability.openAutostart(ctx) }) { Text("Open") }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Alarm, null, tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text("Test it", fontWeight = FontWeight.Medium)
+                Text(
+                    "Sets a real alarm 2 minutes from now. Lock the phone and wait. For a full check, restart the phone first.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = {
+                prefs.reliabilityDone = true
+                vm.testAlarm { at -> Toast.makeText(ctx, "Test alarm set for ${Fmt.time(at.hour * 60 + at.minute)}", Toast.LENGTH_LONG).show() }
+            }) { Text("Test") }
         }
 
         SectionTitle("Categories")
@@ -242,12 +288,15 @@ fun SettingsScreen(vm: MainViewModel) {
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text(
-            "Smart Planner 1.0 · All data stays on this phone. No account, no internet needed.",
+            "Smart Planner 1.1 · All data stays on this phone. No account, no internet needed.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(96.dp))
     }
 
+    if (pickSummary) TimeDialog(initial = summaryAt, title = "Morning summary at", onDismiss = { pickSummary = false }) {
+        summaryAt = it; prefs.summaryMinutes = it; vm.scheduleSummary(); pickSummary = false
+    }
     if (addCat) TextInputDialog("New category", "Name", onDismiss = { addCat = false }) { vm.addCategory(it); addCat = false }
     deleteCat?.let { id ->
         val c = categories.firstOrNull { it.id == id }

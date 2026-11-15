@@ -19,9 +19,8 @@ class PlannerApp : Application() {
         super.onCreate()
         val prefs = Prefs(this)
         repository = Repository(this, PlannerDatabase.create(this), prefs)
-        Notifier.createChannels(this, prefs)
+        Notifier.createChannels(this)
         appScope.launch {
-            repository.seedDefaults()
             repository.rollover()
             repository.rescheduleAll()
         }

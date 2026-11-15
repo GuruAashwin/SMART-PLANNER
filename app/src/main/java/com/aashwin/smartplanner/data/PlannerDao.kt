@@ -88,6 +88,15 @@ interface PlannerDao {
     @Query("DELETE FROM habits WHERE id = :id")
     suspend fun deleteHabit(id: Long)
 
+    @Query("SELECT * FROM habits WHERE id = :id")
+    suspend fun getHabit(id: Long): HabitEntity?
+
+    @Update
+    suspend fun updateHabit(habit: HabitEntity)
+
+    @Query("SELECT COUNT(*) FROM habit_logs WHERE habitId = :habitId AND day = :day")
+    suspend fun habitDoneCount(habitId: Long, day: Long): Int
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertHabitLog(log: HabitLogEntity)
 

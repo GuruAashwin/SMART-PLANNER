@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.aashwin.smartplanner.MainActivity
+import com.aashwin.smartplanner.data.HabitEntity
 import com.aashwin.smartplanner.data.ReminderEntity
 import com.aashwin.smartplanner.data.Status
 import com.aashwin.smartplanner.data.TaskEntity
@@ -23,12 +24,16 @@ object Scheduler {
     const val KIND_ALARM = 1
     const val KIND_SNOOZE = 2
     const val KIND_ROLLOVER = 3
+    const val KIND_SUMMARY = 4
+    const val KIND_HABIT = 5
 
     const val EXTRA_KIND = "kind"
     const val EXTRA_TASK = "taskId"
     const val EXTRA_REMINDER = "reminderId"
+    const val EXTRA_HABIT = "habitId"
 
-    private fun requestCode(kind: Int, id: Long): Int = (id * 4 + kind).toInt()
+    /** Each kind gets its own slot so ids of different kinds never collide. */
+    private fun requestCode(kind: Int, id: Long): Int = (id * 8 + kind).toInt()
 
     private fun intent(ctx: Context, kind: Int, taskId: Long, reminderId: Long = 0): Intent =
         Intent(ctx, AlertReceiver::class.java)
@@ -36,6 +41,7 @@ object Scheduler {
             .putExtra(EXTRA_KIND, kind)
             .putExtra(EXTRA_TASK, taskId)
             .putExtra(EXTRA_REMINDER, reminderId)
+            .putExtra(EXTRA_HABIT, taskId)
 
     private fun pending(ctx: Context, kind: Int, id: Long, taskId: Long, reminderId: Long = 0): PendingIntent =
         PendingIntent.getBroadcast(
@@ -67,6 +73,7 @@ object Scheduler {
         }
     }
 
+    /** setAlarmClock is the most reliable kind: phones treat it like a clock-app alarm. */
     private fun setAlarmClock(ctx: Context, at: Long, pi: PendingIntent) {
         val show = PendingIntent.getActivity(
             ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
@@ -77,6 +84,15 @@ object Scheduler {
         } catch (e: SecurityException) {
             setExact(ctx, at, pi)
         }
+    }
+
+    private fun millis(dt: LocalDateTime) = dt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /** Next moment at [minutes] after midnight that is still ahead. */
+    private fun nextAt(minutes: Int, extraSeconds: Int = 0): Long {
+        var at = LocalDateTime.of(LocalDate.now(), LocalTime.of(minutes / 60, minutes % 60, extraSeconds))
+        if (!at.isAfter(LocalDateTime.now())) at = at.plusDays(1)
+        return millis(at)
     }
 
     /** Schedule every future alert of a pending task. Past alerts are skipped (no duplicates after reboot). */
@@ -105,11 +121,18 @@ object Scheduler {
     }
 
     /** Daily roll-over of recurring tasks at the start of the user's day. */
-    fun scheduleRollover(ctx: Context, startHour: Int) {
-        val zone = ZoneId.systemDefault()
-        var at = LocalDateTime.of(LocalDate.now(), LocalTime.of(startHour, 0, 30))
-        if (!at.isAfter(LocalDateTime.now())) at = at.plusDays(1)
-        val millis = at.atZone(zone).toInstant().toEpochMilli()
-        setExact(ctx, millis, pending(ctx, KIND_ROLLOVER, 0, 0))
+    fun scheduleRollover(ctx: Context, startHour: Int) =
+        setExact(ctx, nextAt(startHour * 60, 30), pending(ctx, KIND_ROLLOVER, 0, 0))
+
+    fun scheduleSummary(ctx: Context, minutes: Int) =
+        setExact(ctx, nextAt(minutes), pending(ctx, KIND_SUMMARY, 0, 0))
+
+    fun cancelSummary(ctx: Context) = cancelPending(ctx, KIND_SUMMARY, 0, 0)
+
+    fun scheduleHabit(ctx: Context, habit: HabitEntity) {
+        val m = habit.reminderMinutes ?: return
+        setExact(ctx, nextAt(m), pending(ctx, KIND_HABIT, habit.id, habit.id))
     }
+
+    fun cancelHabit(ctx: Context, habitId: Long) = cancelPending(ctx, KIND_HABIT, habitId, habitId)
 }

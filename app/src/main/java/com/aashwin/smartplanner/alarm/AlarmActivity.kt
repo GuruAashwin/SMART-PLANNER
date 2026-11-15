@@ -93,7 +93,7 @@ private fun AlarmScreen(
     onComplete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primaryContainer) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier.fillMaxSize().padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -104,12 +104,12 @@ private fun AlarmScreen(
             Text(
                 task?.title ?: "",
                 fontSize = 30.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 task?.time?.let { Fmt.time(it) } ?: "",
-                fontSize = 22.sp, color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontSize = 22.sp, color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(40.dp))
             Button(onClick = { onSnooze(defaultSnooze) }, Modifier.fillMaxWidth().height(56.dp)) {

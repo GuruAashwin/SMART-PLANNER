@@ -1,11 +1,12 @@
 package com.aashwin.smartplanner.ui
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,20 +15,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Alarm
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -37,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,33 +47,44 @@ import com.aashwin.smartplanner.data.TaskFull
 import com.aashwin.smartplanner.util.Fmt
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-        modifier = modifier.padding(top = 16.dp, bottom = 6.dp),
-    )
-}
-
-@Composable
-private fun Meta(icon: ImageVector, text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, Modifier.size(14.dp), tint = color)
-        Spacer(Modifier.width(3.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+fun SectionTitle(text: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
+    Row(
+        modifier.fillMaxWidth().padding(top = 20.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text.uppercase(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f),
+        )
+        action?.invoke()
     }
 }
 
 @Composable
-fun PriorityMeta(priority: Int) {
-    val (icon, color) = when (priority) {
-        Priority.HIGH -> Icons.Filled.ArrowUpward to PriorityStyle.high
-        Priority.LOW -> Icons.Filled.ArrowDownward to PriorityStyle.low
-        else -> Icons.Filled.Remove to PriorityStyle.medium
-    }
-    Meta(icon, Priority.label(priority), color)
+private fun Meta(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, bold: Boolean = false) {
+    Text(text, style = MaterialTheme.typography.labelMedium, color = color, fontWeight = if (bold) FontWeight.SemiBold else null)
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MetaIcon(icon: ImageVector, description: String) {
+    Icon(icon, description, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Priority uses an icon + a word; Medium is the default and shows nothing (less noise). */
+@Composable
+fun PriorityTag(priority: Int) {
+    when (priority) {
+        Priority.HIGH -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Flag, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(2.dp))
+            Meta("High", MaterialTheme.colorScheme.primary, bold = true)
+        }
+        Priority.LOW -> Meta("Low")
+        else -> {}
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TaskRow(
     full: TaskFull,
@@ -88,6 +92,7 @@ fun TaskRow(
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     onPostpone: () -> Unit,
+    onMoveToToday: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -96,52 +101,61 @@ fun TaskRow(
     val missed = t.status == Status.MISSED
     val overdue = t.isOverdue()
     var menu by remember { mutableStateOf(false) }
-    Card(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onOpen() },
-        colors = CardDefaults.cardColors(
-            containerColor = if (overdue) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-            else MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-    ) {
-        Row(Modifier.padding(start = 4.dp, end = 0.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = done, onCheckedChange = { onToggle() }, enabled = !missed)
-            Column(Modifier.weight(1f)) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box {
+        Row(
+            Modifier.fillMaxWidth()
+                .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggle, enabled = !missed) {
+                if (done) Icon(Icons.Filled.CheckCircle, "Mark not done", tint = MaterialTheme.colorScheme.primary)
+                else Icon(
+                    Icons.Outlined.Circle, "Mark done",
+                    tint = if (t.priority == Priority.HIGH) MaterialTheme.colorScheme.primary else muted,
+                )
+            }
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
                     t.title,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (t.priority == Priority.HIGH && !done) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (done || missed) muted else MaterialTheme.colorScheme.onSurface,
                     textDecoration = if (done) TextDecoration.LineThrough else null,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    if (t.dueDate != null) {
-                        if (overdue) Meta(Icons.Filled.Warning, "Overdue · " + Fmt.due(t.date, t.dueMinutes), MaterialTheme.colorScheme.error)
-                        else Meta(Icons.Filled.Schedule, Fmt.due(t.date, t.dueMinutes))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    when {
+                        missed -> Meta("Missed · " + Fmt.due(t.date, t.dueMinutes), MaterialTheme.colorScheme.error)
+                        overdue -> Meta("Overdue · " + Fmt.due(t.date, t.dueMinutes), MaterialTheme.colorScheme.error, bold = true)
+                        t.dueDate != null -> Meta(Fmt.due(t.date, t.dueMinutes))
                     }
-                    if (missed) Meta(Icons.Filled.Warning, "Missed", MaterialTheme.colorScheme.error)
-                    PriorityMeta(t.priority)
-                    if (categoryName != null) Meta(Icons.Filled.Folder, categoryName)
-                    if (full.subtasks.isNotEmpty()) Meta(Icons.Filled.Checklist, "${full.subtasks.count { it.done }}/${full.subtasks.size}")
-                    if (full.reminders.isNotEmpty()) Meta(Icons.Filled.NotificationsActive, full.reminders.size.toString())
-                    if (t.alarmEnabled) Meta(Icons.Filled.Alarm, "Alarm")
-                    if (t.isRecurring) Meta(Icons.Filled.Repeat, "Repeats")
+                    if (!done) PriorityTag(t.priority)
+                    if (categoryName != null) Meta(categoryName)
+                    if (full.subtasks.isNotEmpty()) Meta("${full.subtasks.count { it.done }}/${full.subtasks.size}")
+                    if (t.alarmEnabled && !done) MetaIcon(Icons.Filled.Alarm, "Alarm")
+                    if (t.isRecurring) MetaIcon(Icons.Filled.Repeat, "Repeats")
+                    if (!done && t.postponeCount >= 3) Meta("postponed ${t.postponeCount}×", MaterialTheme.colorScheme.primary)
                 }
             }
-            Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "More") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    if (!done) DropdownMenuItem(text = { Text("Postpone 1 day") }, onClick = { menu = false; onPostpone() })
-                    DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onDuplicate() })
-                    DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
-                }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (!done && !missed) {
+                if (overdue) DropdownMenuItem(text = { Text("Move to today") }, onClick = { menu = false; onMoveToToday() })
+                DropdownMenuItem(text = { Text("Postpone 1 day") }, onClick = { menu = false; onPostpone() })
             }
+            DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onDuplicate() })
+            DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
         }
     }
 }
 
 /**
  * Handles ticking a task: if it has unfinished checklist items, asks whether to complete them too.
- * Returns the function to call when a checkbox is tapped.
  */
 @Composable
 fun rememberCompleter(vm: MainViewModel): (TaskFull) -> Unit {
@@ -151,12 +165,12 @@ fun rememberCompleter(vm: MainViewModel): (TaskFull) -> Unit {
         AlertDialog(
             onDismissRequest = { asking = null },
             title = { Text("Complete task?") },
-            text = { Text("\"${f.task.title}\" still has $left unfinished checklist item${if (left > 1) "s" else ""}. Mark them completed too?") },
+            text = { Text("$left checklist item${if (left > 1) "s are" else " is"} still open.") },
             confirmButton = { TextButton(onClick = { vm.complete(f.task.id, true); asking = null }) { Text("Complete all") } },
             dismissButton = {
                 Row {
                     TextButton(onClick = { asking = null }) { Text("Cancel") }
-                    TextButton(onClick = { vm.complete(f.task.id, false); asking = null }) { Text("Only the task") }
+                    TextButton(onClick = { vm.complete(f.task.id, false); asking = null }) { Text("Task only") }
                 }
             },
         )
@@ -181,7 +195,7 @@ fun ConfirmDelete(title: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     )
 }
 
-/** Task list with delete confirmation, used by several screens. */
+/** Task list used by every screen. Long-press a task for more actions. */
 @Composable
 fun TaskList(
     items: List<TaskFull>,
@@ -192,15 +206,18 @@ fun TaskList(
     val complete = rememberCompleter(vm)
     var deleting by remember { mutableStateOf<TaskFull?>(null) }
     items.forEach { f ->
-        TaskRow(
-            full = f,
-            categoryName = f.task.categoryId?.let { categoryNames[it] },
-            onToggle = { complete(f) },
-            onOpen = { onOpen(f.task.id) },
-            onPostpone = { vm.postpone(f.task.id) },
-            onDuplicate = { vm.duplicate(f.task.id) },
-            onDelete = { deleting = f },
-        )
+        key(f.task.id) {
+            TaskRow(
+                full = f,
+                categoryName = f.task.categoryId?.let { categoryNames[it] },
+                onToggle = { complete(f) },
+                onOpen = { onOpen(f.task.id) },
+                onPostpone = { vm.postpone(f.task.id) },
+                onMoveToToday = { vm.moveToToday(listOf(f.task.id)) },
+                onDuplicate = { vm.duplicate(f.task.id) },
+                onDelete = { deleting = f },
+            )
+        }
     }
     deleting?.let { f -> ConfirmDelete(f.task.title, { vm.delete(f.task.id) }, { deleting = null }) }
 }

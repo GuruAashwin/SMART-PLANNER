@@ -38,7 +38,11 @@ class AlertReceiver : BroadcastReceiver() {
             when (kind) {
                 Scheduler.KIND_REMINDER -> {
                     val rid = intent.getLongExtra(Scheduler.EXTRA_REMINDER, 0)
-                    if (full.reminders.any { it.id == rid }) Notifier.showReminder(context, task, repo.prefs)
+                    val r = full.reminders.firstOrNull { it.id == rid }
+                    // An "at due time" reminder is redundant when the alarm rings at that moment.
+                    if (r != null && !(r.offsetMinutes == 0 && task.alarmEnabled)) {
+                        Notifier.showReminder(context, task, repo.prefs)
+                    }
                 }
                 Scheduler.KIND_ALARM -> Notifier.showAlarm(context, task, repo.prefs)
                 Scheduler.KIND_SNOOZE -> {

@@ -4,14 +4,17 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -27,9 +30,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -49,7 +51,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.aashwin.smartplanner.data.Prefs
 import java.time.LocalDate
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
@@ -88,7 +89,7 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
     Scaffold(
         bottomBar = {
             if (!route.startsWith("edit")) {
-                NavigationBar {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                     TABS.forEach { tab ->
                         NavigationBarItem(
                             selected = route == tab.route,
@@ -108,7 +109,11 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
         },
         floatingActionButton = {
             if (route in listOf("home", "tasks", "calendar", "habits")) {
-                FloatingActionButton(onClick = { quickAdd = true }) {
+                FloatingActionButton(
+                    onClick = { quickAdd = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) {
                     Icon(Icons.Filled.Add, if (route == "habits") "Add habit" else "Add task")
                 }
             }
@@ -148,48 +153,41 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
 @Composable
 private fun Onboarding(vm: MainViewModel) {
     var name by remember { mutableStateOf("") }
-    var theme by remember { mutableStateOf(Prefs.THEME_SYSTEM) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         vm.prefs.setOnboarded()
     }
+    fun start() {
+        vm.prefs.setName(name.trim())
+        if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else vm.prefs.setOnboarded()
+    }
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
-            Spacer(Modifier.height(48.dp))
-            Text("Smart Planner", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Column(
+            Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(28.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text("Smart Planner", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Tasks, reminders, alarms and habits in one place. Everything stays on your phone; no account needed.",
+                "Plan it once. Get reminded on time. Never lose an unfinished task.",
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(40.dp))
             OutlinedTextField(
-                value = name, onValueChange = { name = it }, label = { Text("Your name (optional)") },
+                value = name, onValueChange = { name = it }, label = { Text("Your name") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(20.dp))
-            Text("Theme")
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                val opts = listOf(Prefs.THEME_SYSTEM to "System", Prefs.THEME_LIGHT to "Light", Prefs.THEME_DARK to "Dark")
-                opts.forEachIndexed { i, (v, label) ->
-                    SegmentedButton(
-                        selected = theme == v, onClick = { theme = v; vm.prefs.setTheme(v) },
-                        shape = SegmentedButtonDefaults.itemShape(i, opts.size),
-                    ) { Text(label) }
-                }
-            }
-            Spacer(Modifier.height(32.dp))
-            Text(
-                "Notifications are required to remind you about your scheduled tasks. You'll be asked to allow them next.",
-                style = MaterialTheme.typography.bodyMedium,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { start() }),
             )
             Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    vm.prefs.setName(name.trim())
-                    if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    else vm.prefs.setOnboarded()
-                },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) { Text("Get started") }
+            Text(
+                "Next, allow notifications so reminders and alarms can reach you.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = { start() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text("Get started", fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

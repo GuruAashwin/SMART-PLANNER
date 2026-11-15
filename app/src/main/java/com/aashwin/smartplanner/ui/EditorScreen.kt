@@ -1,6 +1,6 @@
 package com.aashwin.smartplanner.ui
 
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -23,37 +25,39 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Snooze
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -66,7 +70,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aashwin.smartplanner.data.Priority
@@ -91,9 +99,27 @@ private val RECURRENCES = listOf(
     Recurrence.NONE, Recurrence.DAILY, Recurrence.WEEKDAYS, Recurrence.WEEKLY, Recurrence.MONTHLY, Recurrence.EVERY_N_DAYS,
 )
 private fun recName(t: Int) = when (t) {
-    Recurrence.DAILY -> "Daily"; Recurrence.WEEKDAYS -> "Selected weekdays"; Recurrence.WEEKLY -> "Weekly"
-    Recurrence.MONTHLY -> "Monthly"; Recurrence.EVERY_N_DAYS -> "Every N days"; else -> "Does not repeat"
+    Recurrence.DAILY -> "Every day"; Recurrence.WEEKDAYS -> "On chosen days"; Recurrence.WEEKLY -> "Every week"
+    Recurrence.MONTHLY -> "Every month"; Recurrence.EVERY_N_DAYS -> "Every few days"; else -> "Doesn't repeat"
 }
+
+/** One line of the editor: icon on the left, content on the right. */
+@Composable
+private fun EditorRow(icon: ImageVector, onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(16.dp))
+        Box(Modifier.weight(1f)) { content() }
+    }
+}
+
+@Composable
+private fun Muted(text: String) = Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -123,6 +149,7 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
     var reminderMenu by remember { mutableStateOf(false) }
     var catMenu by remember { mutableStateOf(false) }
     var recMenu by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
     var newCatDialog by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var titleError by remember { mutableStateOf(false) }
@@ -143,218 +170,248 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         loaded = true
     }
 
+    fun setTime(m: Int?) {
+        val hadNoTime = minutes == null
+        minutes = m
+        if (m != null && hadNoTime && reminders.isEmpty() && vm.prefs.defaultReminder >= 0) reminders.add(vm.prefs.defaultReminder)
+        if (m == null) { reminders.clear(); alarm = false }
+    }
+
     fun save() {
         if (title.isBlank()) { titleError = true; return }
         var d = date
-        if (recType != Recurrence.NONE) {
-            d = RecurrenceCalc.firstOnOrAfter(d ?: LocalDate.now(), recType, recDays)
-        }
+        if (recType != Recurrence.NONE) d = RecurrenceCalc.firstOnOrAfter(d ?: LocalDate.now(), recType, recDays)
         val base = original ?: TaskEntity(title = "")
+        val dateChanged = base.dueDate != d?.toEpochDay() || base.dueMinutes != (if (d == null) null else minutes)
         val task = base.copy(
             title = title.trim(), description = description.trim(), categoryId = categoryId, priority = priority,
             dueDate = d?.toEpochDay(), dueMinutes = if (d == null) null else minutes,
-            alarmEnabled = alarm, recType = recType,
+            alarmEnabled = alarm && d != null && minutes != null, recType = recType,
             recInterval = recInterval.toIntOrNull()?.coerceIn(1, 365) ?: 1,
             recDays = if (recType == Recurrence.WEEKDAYS && recDays == 0) (1 shl (d ?: LocalDate.now()).dayOfWeek.value - 1) else recDays,
-            snoozedUntil = null,
+            snoozedUntil = if (dateChanged) null else base.snoozedUntil,
+            // A new date counts as a fresh plan: the "postponed" hint resets.
+            postponeCount = if (dateChanged && original != null) 0 else base.postponeCount,
         )
-        // Re-opening a completed task by editing keeps it completed unless every subtask is undone.
-        vm.save(task, subtasks.toList(), reminders.toList()) { }
+        vm.save(task, subtasks.toList(), if (task.dueMinutes == null) emptyList() else reminders.toList())
         onClose()
     }
+
+    val plainField = TextFieldDefaults.colors(
+        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+        errorContainerColor = Color.Transparent,
+    )
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isNew) "New task" else "Edit task") },
+                title = { },
                 navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
-                    if (!isNew) {
-                        if (original?.status == Status.PENDING) {
-                            IconButton(onClick = { vm.postpone(taskId); onClose() }) { Icon(Icons.Filled.Snooze, "Postpone 1 day") }
+                    if (!isNew) Box {
+                        IconButton(onClick = { moreMenu = true }) { Icon(Icons.Filled.MoreVert, "More actions") }
+                        DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                            if (original?.status == Status.PENDING) DropdownMenuItem(
+                                text = { Text("Postpone 1 day") }, onClick = { moreMenu = false; vm.postpone(taskId); onClose() },
+                            )
+                            DropdownMenuItem(text = { Text("Duplicate") }, onClick = { moreMenu = false; vm.duplicate(taskId); onClose() })
+                            DropdownMenuItem(text = { Text("Delete") }, onClick = { moreMenu = false; confirmDelete = true })
                         }
-                        IconButton(onClick = { vm.duplicate(taskId); onClose() }) { Icon(Icons.Filled.ContentCopy, "Duplicate") }
-                        IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Delete") }
                     }
-                    TextButton(onClick = { save() }) { Text("Save") }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                windowInsets = WindowInsets(0, 0, 0, 0), // the outer screen already handles system bars
             )
         },
+        bottomBar = {
+            Button(
+                onClick = { save() },
+                modifier = Modifier.fillMaxWidth().imePadding()
+                    .padding(horizontal = 20.dp, vertical = 12.dp).height(52.dp),
+            ) { Text(if (isNew) "Add task" else "Save", fontWeight = FontWeight.SemiBold) }
+        },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { pad ->
         if (!loaded) return@Scaffold
         Column(
-            Modifier.fillMaxSize().padding(pad).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
+            Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
         ) {
-            OutlinedTextField(
+            TextField(
                 value = title, onValueChange = { title = it; titleError = false },
-                label = { Text("Title") }, isError = titleError,
+                placeholder = { Text("What needs doing?", style = MaterialTheme.typography.headlineSmall) },
+                textStyle = MaterialTheme.typography.headlineSmall,
+                isError = titleError,
                 supportingText = if (titleError) { { Text("Enter a title") } } else null,
-                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                modifier = Modifier.fillMaxWidth(), colors = plainField,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             )
-
-            // ---- date & time ----
-            SectionTitle("When")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                AssistChip(
-                    onClick = { showDate = true },
-                    label = { Text(date?.let { Fmt.day(it) } ?: "Add date") },
-                    leadingIcon = { Icon(Icons.Filled.CalendarMonth, null) },
-                )
-                if (date != null) {
-                    AssistChip(
-                        onClick = { showTime = true },
-                        label = { Text(minutes?.let { Fmt.time(it) } ?: "Add time") },
-                        leadingIcon = { Icon(Icons.Filled.Schedule, null) },
-                    )
-                    if (minutes != null) TextButton(onClick = { minutes = null }) { Text("No time") }
-                }
-            }
-            if (date != null) {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { date = null; minutes = null }) { Text("Remove date") }
-                    TextButton(onClick = { date = LocalDate.now() }) { Text("Today") }
-                    TextButton(onClick = { date = LocalDate.now().plusDays(1) }) { Text("Tomorrow") }
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { date = LocalDate.now() }) { Text("Today") }
-                    TextButton(onClick = { date = LocalDate.now().plusDays(1) }) { Text("Tomorrow") }
-                }
-            }
-
-            // ---- priority ----
-            SectionTitle("Priority")
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                val opts = listOf(Priority.LOW, Priority.MEDIUM, Priority.HIGH)
-                opts.forEachIndexed { i, p ->
-                    SegmentedButton(
-                        selected = priority == p, onClick = { priority = p },
-                        shape = SegmentedButtonDefaults.itemShape(i, opts.size),
-                        icon = { },
-                    ) { PriorityMeta(p) }
-                }
-            }
-
-            // ---- category ----
-            SectionTitle("Category")
-            Box {
-                OutlinedButton(onClick = { catMenu = true }) {
-                    Text(categories.firstOrNull { it.id == categoryId }?.name ?: "No category")
-                }
-                DropdownMenu(expanded = catMenu, onDismissRequest = { catMenu = false }) {
-                    DropdownMenuItem(text = { Text("No category") }, onClick = { categoryId = null; catMenu = false })
-                    categories.forEach { c ->
-                        DropdownMenuItem(text = { Text(c.name) }, onClick = { categoryId = c.id; catMenu = false })
-                    }
-                    DropdownMenuItem(text = { Text("+ New category") }, onClick = { catMenu = false; newCatDialog = true })
-                }
-            }
-
-            // ---- reminders & alarm ----
-            SectionTitle("Reminders")
-            if (minutes == null) {
+            TextField(
+                value = description, onValueChange = { description = it },
+                placeholder = { Text("Add notes") },
+                modifier = Modifier.fillMaxWidth(), colors = plainField,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            )
+            val postponed = original?.let { it.status == Status.PENDING && it.postponeCount >= 3 } == true
+            if (postponed) {
                 Text(
-                    "Set a date and time to use reminders and alarms.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "Postponed ${original?.postponeCount} times. Maybe pick a date that really works?",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
-            } else {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    reminders.sorted().forEach { off ->
-                        val at = LocalTime.of(minutes!! / 60, minutes!! % 60).minusMinutes(off.toLong())
-                        InputChip(
-                            selected = false, onClick = { reminders.remove(off) },
-                            label = { Text("${Fmt.offset(off)} (${Fmt.time(at)})") },
-                            leadingIcon = { Icon(Icons.Filled.NotificationsActive, null) },
-                            trailingIcon = { Icon(Icons.Filled.Close, "Remove") },
-                        )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+
+            // ---- date ----
+            EditorRow(Icons.Filled.CalendarMonth, onClick = if (date != null) { { showDate = true } } else null) {
+                if (date == null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip(onClick = { date = LocalDate.now() }, label = { Text("Today") })
+                        AssistChip(onClick = { date = LocalDate.now().plusDays(1) }, label = { Text("Tomorrow") })
+                        AssistChip(onClick = { showDate = true }, label = { Text("Pick date") })
                     }
-                    Box {
-                        AssistChip(
-                            onClick = { reminderMenu = true },
-                            label = { Text("Add reminder") },
-                            leadingIcon = { Icon(Icons.Filled.Add, null) },
-                        )
-                        DropdownMenu(expanded = reminderMenu, onDismissRequest = { reminderMenu = false }) {
-                            REMINDER_PRESETS.filter { it !in reminders }.forEach { off ->
-                                DropdownMenuItem(text = { Text(Fmt.offset(off)) }, onClick = { reminders.add(off); reminderMenu = false })
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(Fmt.day(date!!) + if (Fmt.day(date!!).let { it == "Today" || it == "Tomorrow" }) " · " + Fmt.longDay(date!!) else "",
+                            modifier = Modifier.weight(1f))
+                        IconButton(onClick = { date = null; setTime(null) }) { Icon(Icons.Filled.Close, "Remove date") }
+                    }
+                }
+            }
+            // ---- time ----
+            if (date != null) {
+                EditorRow(Icons.Filled.Schedule, onClick = { showTime = true }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (minutes == null) Box(Modifier.weight(1f)) { Muted("Add time") }
+                        else Text(Fmt.time(minutes!!), Modifier.weight(1f))
+                        if (minutes != null) IconButton(onClick = { setTime(null) }) { Icon(Icons.Filled.Close, "Remove time") }
+                    }
+                }
+            }
+            // ---- reminders + alarm (need a time) ----
+            if (date != null && minutes != null) {
+                EditorRow(Icons.Filled.Notifications) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        reminders.sorted().forEach { off ->
+                            val at = LocalTime.of(minutes!! / 60, minutes!! % 60).minusMinutes(off.toLong())
+                            InputChip(
+                                selected = false, onClick = { reminders.remove(off) },
+                                label = { Text(if (off == 0) "At ${Fmt.time(at)}" else Fmt.time(at)) },
+                                trailingIcon = { Icon(Icons.Filled.Close, "Remove reminder", Modifier.size(16.dp)) },
+                            )
+                        }
+                        Box {
+                            AssistChip(
+                                onClick = { reminderMenu = true },
+                                label = { Text(if (reminders.isEmpty()) "Add reminder" else "Add") },
+                                leadingIcon = { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)) },
+                            )
+                            DropdownMenu(expanded = reminderMenu, onDismissRequest = { reminderMenu = false }) {
+                                REMINDER_PRESETS.filter { it !in reminders }.forEach { off ->
+                                    DropdownMenuItem(text = { Text(Fmt.offset(off)) }, onClick = { reminders.add(off); reminderMenu = false })
+                                }
+                                DropdownMenuItem(text = { Text("Pick a time…") }, onClick = { reminderMenu = false; showReminderTime = true })
                             }
-                            DropdownMenuItem(text = { Text("Custom time…") }, onClick = { reminderMenu = false; showReminderTime = true })
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Alarm, null)
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("Alarm at due time")
-                        Text(
-                            "Rings with sound and vibration, with Snooze / Complete / Dismiss",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                EditorRow(Icons.Filled.Alarm, onClick = { alarm = !alarm }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Alarm")
+                            Text(
+                                "Rings full screen at ${Fmt.time(minutes!!)}",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = alarm, onCheckedChange = { alarm = it })
                     }
-                    Switch(checked = alarm, onCheckedChange = { alarm = it })
                 }
             }
-
             // ---- repeat ----
-            SectionTitle("Repeat")
-            Box {
-                OutlinedButton(onClick = { recMenu = true }) { Text(recName(recType)) }
-                DropdownMenu(expanded = recMenu, onDismissRequest = { recMenu = false }) {
-                    RECURRENCES.forEach { r ->
-                        DropdownMenuItem(text = { Text(recName(r)) }, onClick = { recType = r; recMenu = false })
+            EditorRow(Icons.Filled.Repeat, onClick = { recMenu = true }) {
+                Box {
+                    if (recType == Recurrence.NONE) Muted(recName(recType)) else Text(recName(recType))
+                    DropdownMenu(expanded = recMenu, onDismissRequest = { recMenu = false }) {
+                        RECURRENCES.forEach { r ->
+                            DropdownMenuItem(text = { Text(recName(r)) }, onClick = { recType = r; recMenu = false })
+                        }
                     }
                 }
             }
             if (recType == Recurrence.WEEKDAYS) {
-                FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(Modifier.padding(start = 42.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Recurrence.DAY_SHORT.forEachIndexed { i, name ->
-                        val on = recDays and (1 shl i) != 0
-                        FilterChip(selected = on, onClick = { recDays = recDays xor (1 shl i) }, label = { Text(name) })
+                        FilterChip(
+                            selected = recDays and (1 shl i) != 0,
+                            onClick = { recDays = recDays xor (1 shl i) },
+                            label = { Text(name) },
+                        )
                     }
                 }
             }
             if (recType == Recurrence.EVERY_N_DAYS) {
                 OutlinedTextField(
                     value = recInterval, onValueChange = { v -> recInterval = v.filter { it.isDigit() }.take(3) },
-                    label = { Text("Repeat every … days") },
+                    label = { Text("Every … days") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.padding(top = 6.dp).width(200.dp), singleLine = true,
+                    modifier = Modifier.padding(start = 42.dp).width(160.dp), singleLine = true,
                 )
+            }
+            // ---- priority ----
+            EditorRow(Icons.Filled.Flag) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(Priority.LOW, Priority.MEDIUM, Priority.HIGH).forEach { p ->
+                        FilterChip(selected = priority == p, onClick = { priority = p }, label = { Text(Priority.label(p)) })
+                    }
+                }
+            }
+            // ---- category ----
+            EditorRow(Icons.Filled.Folder, onClick = { catMenu = true }) {
+                Box {
+                    val name = categories.firstOrNull { it.id == categoryId }?.name
+                    if (name == null) Muted("No category") else Text(name)
+                    DropdownMenu(expanded = catMenu, onDismissRequest = { catMenu = false }) {
+                        DropdownMenuItem(text = { Text("No category") }, onClick = { categoryId = null; catMenu = false })
+                        categories.forEach { c ->
+                            DropdownMenuItem(text = { Text(c.name) }, onClick = { categoryId = c.id; catMenu = false })
+                        }
+                        DropdownMenuItem(text = { Text("New category…") }, onClick = { catMenu = false; newCatDialog = true })
+                    }
+                }
             }
 
             // ---- checklist ----
-            SectionTitle("Checklist" + if (subtasks.isNotEmpty()) " (${subtasks.count { it.done }}/${subtasks.size})" else "")
+            SectionTitle("Checklist" + if (subtasks.isNotEmpty()) " · ${subtasks.count { it.done }}/${subtasks.size}" else "")
             subtasks.forEachIndexed { i, s ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = s.done, onCheckedChange = { subtasks[i] = s.copy(done = it) })
-                    Text(s.title, Modifier.weight(1f))
-                    IconButton(onClick = { subtasks.removeAt(i) }) { Icon(Icons.Filled.Close, "Remove item") }
+                    IconButton(onClick = { subtasks[i] = s.copy(done = !s.done) }) {
+                        if (s.done) Icon(Icons.Filled.CheckCircle, "Undo", tint = MaterialTheme.colorScheme.primary)
+                        else Icon(Icons.Outlined.Circle, "Done", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(
+                        s.title, Modifier.weight(1f),
+                        color = if (s.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    )
+                    IconButton(onClick = { subtasks.removeAt(i) }) {
+                        Icon(Icons.Filled.Close, "Remove item", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             fun addSub() {
                 if (newSub.isNotBlank()) { subtasks.add(SubtaskEntity(taskId = 0, title = newSub.trim())); newSub = "" }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
+                IconButton(onClick = { addSub() }) { Icon(Icons.Filled.Add, "Add item", tint = MaterialTheme.colorScheme.primary) }
+                TextField(
                     value = newSub, onValueChange = { newSub = it },
-                    placeholder = { Text("Add checklist item") }, singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    placeholder = { Text("Add item") }, singleLine = true,
+                    modifier = Modifier.weight(1f), colors = plainField,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, capitalization = KeyboardCapitalization.Sentences),
                     keyboardActions = KeyboardActions(onDone = { addSub() }),
                 )
-                IconButton(onClick = { addSub() }) { Icon(Icons.Filled.Add, "Add item") }
             }
-
-            // ---- notes ----
-            SectionTitle("Notes")
-            OutlinedTextField(
-                value = description, onValueChange = { description = it },
-                placeholder = { Text("Description (optional)") },
-                modifier = Modifier.fillMaxWidth(), minLines = 3,
-            )
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = { save() }, Modifier.fillMaxWidth().height(52.dp)) { Text("Save task") }
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
         }
     }
 
@@ -375,11 +432,8 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         ) { DatePicker(state) }
     }
     if (showTime) {
-        TimeDialog(initial = minutes ?: (LocalTime.now().hour + 1).coerceAtMost(23) * 60, onDismiss = { showTime = false }) { m ->
-            val hadNoTime = minutes == null
-            minutes = m
-            if (hadNoTime && reminders.isEmpty() && vm.prefs.defaultReminder >= 0) reminders.add(vm.prefs.defaultReminder)
-            showTime = false
+        TimeDialog(initial = minutes ?: ((LocalTime.now().hour + 1).coerceAtMost(23) * 60), onDismiss = { showTime = false }) { m ->
+            setTime(m); showTime = false
         }
     }
     if (showReminderTime && minutes != null && date != null) {

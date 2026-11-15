@@ -3,23 +3,18 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- clock face -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M54,30a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
-    <path
-        android:fillColor="#FF3D5AFE"
-        android:pathData="M54,35a19,19 0,1 1,0 38a19,19 0,1 1,0 -38z" />
-    <!-- check mark -->
+    <!-- gold ring -->
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="5"
+        android:strokeColor="#FFD4AF37"
+        android:strokeWidth="3.5"
+        android:pathData="M54,32a22,22 0,1 1,0 44a22,22 0,1 1,0 -44z" />
+    <!-- gold check -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFD4AF37"
+        android:strokeWidth="4.5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M45,54 L51,60 L63,47" />
-    <!-- bells -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M34,36 L40,30 L44,34 L38,40z M74,36 L68,30 L64,34 L70,40z" />
+        android:pathData="M44,54 L51,61 L65,46" />
 </vector>

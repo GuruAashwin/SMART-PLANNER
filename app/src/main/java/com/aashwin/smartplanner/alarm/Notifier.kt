@@ -23,6 +23,7 @@ import com.aashwin.smartplanner.util.Fmt
 
 object Notifier {
     const val CH_REMINDERS = "reminders"
+    private val GOLD = 0xFFD4AF37.toInt()
     private const val ALARM_PREFIX = "alarms_v"
 
     fun alarmChannelId(prefs: Prefs) = ALARM_PREFIX + prefs.alarmChannelVersion
@@ -103,7 +104,8 @@ object Notifier {
         val n = NotificationCompat.Builder(ctx, CH_REMINDERS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(task.title)
-            .setContentText(dueText(task) + " · " + com.aashwin.smartplanner.data.Priority.label(task.priority) + " priority")
+            .setContentText(dueText(task))
+            .setColor(GOLD)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
@@ -130,6 +132,7 @@ object Notifier {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(task.title)
             .setContentText(dueText(task))
+            .setColor(GOLD)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setOngoing(true)

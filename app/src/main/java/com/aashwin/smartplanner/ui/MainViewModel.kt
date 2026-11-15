@@ -35,6 +35,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun delete(id: Long) = viewModelScope.launch { repo.deleteTask(id) }
     fun duplicate(id: Long) = viewModelScope.launch { repo.duplicate(id) }
     fun postpone(id: Long) = viewModelScope.launch { repo.postponeOneDay(id) }
+    fun moveToToday(ids: List<Long>) = viewModelScope.launch { repo.moveToToday(ids) }
     fun reschedule(id: Long, date: LocalDate?, minutes: Int?) =
         viewModelScope.launch { repo.reschedule(id, date, minutes) }
 

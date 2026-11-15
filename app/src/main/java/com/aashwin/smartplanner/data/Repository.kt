@@ -5,6 +5,8 @@ import androidx.room.withTransaction
 import com.aashwin.smartplanner.alarm.Notifier
 import com.aashwin.smartplanner.alarm.Scheduler
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 
 /** All business rules live here, so the UI, notifications and alarm screen behave the same way. */
@@ -14,6 +16,13 @@ class Repository(
     val prefs: Prefs,
 ) {
     private val dao = db.dao()
+
+    /**
+     * Every change goes through this lock. Without it, two paths running at once
+     * (e.g. app start + boot receiver both doing the daily roll-over, or Complete tapped
+     * on the notification and in the app) could create duplicate next occurrences.
+     */
+    private val lock = Mutex()
 
     val tasks: Flow<List<TaskFull>> = dao.observeTasks()
     val categories: Flow<List<CategoryEntity>> = dao.observeCategories()
@@ -31,7 +40,10 @@ class Repository(
     // ---------------- tasks ----------------
 
     /** Insert or update a task with its checklist and reminders; reschedules its alerts. */
-    suspend fun saveTask(task: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long {
+    suspend fun saveTask(task: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long =
+        lock.withLock { saveInternal(task, subtasks, reminderOffsets) }
+
+    private suspend fun saveInternal(task: TaskEntity, subtasks: List<SubtaskEntity>, reminderOffsets: List<Int>): Long {
         val old = if (task.id != 0L) dao.getTaskFull(task.id) else null
         old?.let { cancelAlerts(it) }
         val id = db.withTransaction {
@@ -45,7 +57,7 @@ class Repository(
         val full = dao.getTaskFull(id) ?: return id
         // All checklist items done => the task is done.
         if (full.task.status == Status.PENDING && full.subtasks.isNotEmpty() && full.subtasks.all { it.done }) {
-            completeTask(id, completeSubtasks = false)
+            completeInternal(id, completeSubtasks = false)
         } else {
             Scheduler.schedule(ctx, full.task, full.reminders)
         }
@@ -61,7 +73,9 @@ class Repository(
      * Completion: status, time, cancel reminders + alarm, then create the next
      * occurrence for recurring tasks.
      */
-    suspend fun completeTask(id: Long, completeSubtasks: Boolean) {
+    suspend fun completeTask(id: Long, completeSubtasks: Boolean) = lock.withLock { completeInternal(id, completeSubtasks) }
+
+    private suspend fun completeInternal(id: Long, completeSubtasks: Boolean) {
         val full = dao.getTaskFull(id) ?: return
         if (full.task.status == Status.DONE) return
         cancelAlerts(full)
@@ -80,30 +94,31 @@ class Repository(
             id = 0, dueDate = next.toEpochDay(), status = Status.PENDING, completedAt = null,
             createdAt = System.currentTimeMillis(), snoozedUntil = null, postponeCount = 0,
         )
-        saveTask(newTask, full.sortedSubtasks.map { it.copy(done = false) }, full.reminders.map { it.offsetMinutes })
+        saveInternal(newTask, full.sortedSubtasks.map { it.copy(done = false) }, full.reminders.map { it.offsetMinutes })
         // the old occurrence stops being "recurring" so it never spawns twice
         dao.getTask(t.id)?.let { dao.updateTask(it.copy(recType = Recurrence.NONE)) }
     }
 
-    suspend fun uncompleteTask(id: Long) {
-        val full = dao.getTaskFull(id) ?: return
+    suspend fun uncompleteTask(id: Long) = lock.withLock {
+        val full = dao.getTaskFull(id) ?: return@withLock
         val t = full.task.copy(status = Status.PENDING, completedAt = null)
         dao.updateTask(t)
         Scheduler.schedule(ctx, t, full.reminders)
     }
 
-    suspend fun toggleSubtask(subId: Long) {
-        val s = dao.getSubtask(subId) ?: return
+    suspend fun toggleSubtask(subId: Long) = lock.withLock {
+        val s = dao.getSubtask(subId) ?: return@withLock
         dao.updateSubtask(s.copy(done = !s.done))
-        val full = dao.getTaskFull(s.taskId) ?: return
+        val full = dao.getTaskFull(s.taskId) ?: return@withLock
         if (full.task.status == Status.PENDING && full.subtasks.isNotEmpty() && full.subtasks.all { it.done }) {
-            completeTask(full.task.id, completeSubtasks = false)
+            completeInternal(full.task.id, completeSubtasks = false)
         }
     }
 
     /** Snooze never completes the task; it only schedules another alert. */
-    suspend fun snooze(id: Long, minutes: Int) {
-        val full = dao.getTaskFull(id) ?: return
+    suspend fun snooze(id: Long, minutes: Int) = lock.withLock {
+        val full = dao.getTaskFull(id) ?: return@withLock
+        if (full.task.status != Status.PENDING) return@withLock
         Notifier.cancel(ctx, id)
         val t = full.task.copy(
             snoozedUntil = System.currentTimeMillis() + minutes * 60_000L,
@@ -113,13 +128,16 @@ class Repository(
         Scheduler.schedule(ctx, t, emptyList())
     }
 
-    suspend fun clearSnooze(id: Long) {
-        dao.getTask(id)?.let { if (it.snoozedUntil != null) dao.updateTask(it.copy(snoozedUntil = null)) }
+    suspend fun clearSnooze(id: Long): Unit = lock.withLock {
+        val t = dao.getTask(id) ?: return@withLock
+        if (t.snoozedUntil != null) dao.updateTask(t.copy(snoozedUntil = null))
     }
 
     suspend fun dismissAlarm(id: Long) = Notifier.cancel(ctx, id)
 
-    suspend fun reschedule(id: Long, date: LocalDate?, minutes: Int?) {
+    suspend fun reschedule(id: Long, date: LocalDate?, minutes: Int?) = lock.withLock { rescheduleInternal(id, date, minutes) }
+
+    private suspend fun rescheduleInternal(id: Long, date: LocalDate?, minutes: Int?) {
         val full = dao.getTaskFull(id) ?: return
         cancelAlerts(full)
         val t = full.task.copy(
@@ -130,15 +148,26 @@ class Repository(
         Scheduler.schedule(ctx, t, full.reminders)
     }
 
-    suspend fun postponeOneDay(id: Long) {
-        val t = dao.getTask(id) ?: return
+    suspend fun postponeOneDay(id: Long) = lock.withLock {
+        val t = dao.getTask(id) ?: return@withLock
         val base = maxOf(t.date ?: LocalDate.now(), LocalDate.now().minusDays(1))
-        reschedule(id, base.plusDays(1), t.dueMinutes)
+        rescheduleInternal(id, base.plusDays(1), t.dueMinutes)
     }
 
-    suspend fun duplicate(id: Long): Long? {
-        val full = dao.getTaskFull(id) ?: return null
-        return saveTask(
+    /** "Move to today" for overdue tasks. A time that has already passed today is dropped (due by end of day). */
+    suspend fun moveToToday(ids: List<Long>) = lock.withLock {
+        val nowMin = java.time.LocalTime.now().let { it.hour * 60 + it.minute }
+        for (id in ids) {
+            val t = dao.getTask(id) ?: continue
+            if (t.status != Status.PENDING) continue
+            val m = t.dueMinutes?.takeIf { it > nowMin }
+            rescheduleInternal(id, LocalDate.now(), m)
+        }
+    }
+
+    suspend fun duplicate(id: Long): Long? = lock.withLock {
+        val full = dao.getTaskFull(id) ?: return@withLock null
+        saveInternal(
             full.task.copy(id = 0, title = full.task.title + " (copy)", status = Status.PENDING, completedAt = null,
                 createdAt = System.currentTimeMillis(), snoozedUntil = null, postponeCount = 0),
             full.sortedSubtasks.map { it.copy(done = false) },
@@ -146,7 +175,7 @@ class Repository(
         )
     }
 
-    suspend fun deleteTask(id: Long) {
+    suspend fun deleteTask(id: Long) = lock.withLock {
         dao.getTaskFull(id)?.let { cancelAlerts(it) }
         dao.deleteTask(id)
     }
@@ -158,7 +187,7 @@ class Repository(
      * overdue. Unfinished recurring occurrences from earlier days are kept as "missed"
      * in history, and the next occurrence is created.
      */
-    suspend fun rollover() {
+    suspend fun rollover() = lock.withLock {
         val today = LocalDate.now().toEpochDay()
         dao.allTasksFull()
             .filter { it.task.status == Status.PENDING && it.task.isRecurring && (it.task.dueDate ?: today) < today }
@@ -171,7 +200,9 @@ class Repository(
     }
 
     /** Re-arm every alert, e.g. after a reboot, time change or app update. */
-    suspend fun rescheduleAll() {
+    suspend fun rescheduleAll() = lock.withLock { rescheduleAllInternal() }
+
+    private suspend fun rescheduleAllInternal() {
         dao.allTasksFull().filter { it.task.status == Status.PENDING }
             .forEach { Scheduler.schedule(ctx, it.task, it.reminders) }
         Scheduler.scheduleRollover(ctx, prefs.dayStartHour)
@@ -198,7 +229,7 @@ class Repository(
         dao.allCategories(), dao.allHabits(), dao.allHabitLogs(),
     )
 
-    suspend fun importJson(json: String) {
+    suspend fun importJson(json: String) = lock.withLock {
         val data = Backup.fromJson(json)
         dao.allTasksFull().forEach { cancelAlerts(it) }
         db.withTransaction {
@@ -210,6 +241,6 @@ class Repository(
             dao.putHabits(data.habits)
             dao.putHabitLogs(data.habitLogs)
         }
-        rescheduleAll()
+        rescheduleAllInternal()
     }
 }

@@ -1,4 +1,5 @@
 <resources>
-    <color name="bg">#FF121318</color>
-    <color name="icon_bg">#FF3D5AFE</color>
+    <color name="bg">#FFFFFFFF</color>
+    <color name="gold">#FFD4AF37</color>
+    <color name="icon_bg">#FF000000</color>
 </resources>

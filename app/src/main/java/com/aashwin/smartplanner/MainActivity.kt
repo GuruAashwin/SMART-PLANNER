@@ -3,15 +3,18 @@ package com.aashwin.smartplanner
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import com.aashwin.smartplanner.ui.AppRoot
 import com.aashwin.smartplanner.ui.MainViewModel
 import com.aashwin.smartplanner.ui.PlannerTheme
+import com.aashwin.smartplanner.ui.isDark
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
@@ -23,6 +26,13 @@ class MainActivity : ComponentActivity() {
         handle(intent)
         setContent {
             val theme by vm.prefs.theme.collectAsState()
+            val dark = isDark(theme)
+            // Status/navigation bar icons follow the app theme (light icons on black, dark icons on white).
+            LaunchedEffect(dark) {
+                val transparent = android.graphics.Color.TRANSPARENT
+                val style = if (dark) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
             PlannerTheme(theme) {
                 AppRoot(vm, openTask.value, onOpenHandled = { openTask.value = null })
             }

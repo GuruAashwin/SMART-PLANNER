@@ -10,7 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -82,7 +83,11 @@ fun QuickAddDialog(
                     keyboardActions = KeyboardActions(onDone = { save() }),
                 )
                 if (text.isNotBlank()) {
-                    Card(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    Surface(
+                        Modifier.fillMaxWidth().padding(top = 12.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
                         Column(Modifier.padding(12.dp)) {
                             Text("I understood:", style = MaterialTheme.typography.labelMedium)
                             Text("Task: ${parsed.title}", fontWeight = FontWeight.Medium)

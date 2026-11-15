@@ -20,7 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +64,7 @@ fun habitStats(h: HabitWithLogs, today: LocalDate = LocalDate.now()): HabitStats
     return HabitStats(current, best, week, (t - monday + 1).toInt(), (month * 100 / windowLen).toInt())
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HabitsScreen(vm: MainViewModel) {
     val habits by vm.habits.collectAsState()
@@ -71,20 +75,25 @@ fun HabitsScreen(vm: MainViewModel) {
         Spacer(Modifier.height(12.dp))
         Text("Habits", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
-            "Build consistency. Tap a day to mark it done.",
+            "Tap a day to log it. Long-press a habit to delete it.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium,
         )
         if (habits.isEmpty()) EmptyHint("No habits yet. Tap + to add one, like Exercise, Reading or Practicing coding.")
         habits.forEach { h ->
             val s = habitStats(h, today)
             val logged = h.logs.map { it.day }.toSet()
-            Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Surface(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                    .combinedClickable(onClick = {}, onLongClick = { deleting = h }),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(h.habit.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.LocalFireDepartment, null, Modifier.size(16.dp), tint = PriorityStyle.high)
+                                Icon(Icons.Filled.LocalFireDepartment, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                                 Text(
                                     " ${s.current} day streak · best ${s.best}",
                                     style = MaterialTheme.typography.bodyMedium,
@@ -101,7 +110,6 @@ fun HabitsScreen(vm: MainViewModel) {
                             onCheckedChange = { vm.setHabit(h.habit.id, today, it) },
                             modifier = Modifier.size(52.dp),
                         ) { Icon(Icons.Filled.Check, if (doneToday) "Done today" else "Mark done today") }
-                        IconButton(onClick = { deleting = h }) { Icon(Icons.Filled.Delete, "Delete habit") }
                     }
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

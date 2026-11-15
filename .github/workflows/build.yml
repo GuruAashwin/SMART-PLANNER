@@ -1,0 +1,37 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk SmartPlanner.apk
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartPlanner-apk
+          path: SmartPlanner.apk
+      - name: Publish as latest release (easy phone download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Smart Planner (latest build)
+          body: Download SmartPlanner.apk below and open it on your Android phone to install.
+          files: SmartPlanner.apk
+          make_latest: true

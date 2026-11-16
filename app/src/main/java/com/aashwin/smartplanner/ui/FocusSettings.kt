@@ -280,7 +280,11 @@ fun FocusModeScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = vm.prefs
     var tick by remember { mutableIntStateOf(0) }
-    LifecycleResumeEffect(Unit) { tick++; onPauseOrDispose { } }
+    LifecycleResumeEffect(Unit) {
+        tick++
+        if (prefs.focus.value != null) com.aashwin.smartplanner.blocker.BlockerService.start(ctx, prefs) // just granted? start now
+        onPauseOrDispose { }
+    }
     val usageOk = remember(tick) { com.aashwin.smartplanner.blocker.BlockerService.hasUsageAccess(ctx) }
     val overlayOk = remember(tick) { Settings.canDrawOverlays(ctx) }
     val dndOk = remember(tick) { FocusMode.dndAllowed(ctx) }

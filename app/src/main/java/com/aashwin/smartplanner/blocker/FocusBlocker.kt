@@ -7,6 +7,15 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -54,46 +63,109 @@ import kotlinx.coroutines.delay
 
 /**
  * The app blocker. Runs only during a focus session the user started (with the focus
- * notification showing). Once a second it asks Android which app came to the front
- * (Usage access) and, if it is one you chose to block, shows "Back to work" over it
- * (Display over other apps). It never reads what is on the screen. Breaks are free time.
+ * notification showing). Every 0.7 s it asks Android which app is in front (Usage access) and,
+ * if it is one you chose to block, draws "Back to work" on top of it (Display over other apps).
+ * Drawing an overlay works even on phones that block apps from opening screens in the
+ * background (Xiaomi, Realme, Vivo, Oppo). It never reads what is on the screen. Breaks are free.
  */
 class BlockerService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private var lastPkg: String? = null
-    private var lastBlockAt = 0L
+    /** App currently in front, as last reported by Android. */
+    private var foreground: String? = null
+    private var overlay: View? = null
+    private var overlayPkg: String? = null
+    private var overlayStatus: TextView? = null
 
     private val tick = object : Runnable {
         override fun run() {
             val prefs = (application as PlannerApp).repository.prefs
             val run = prefs.focus.value
-            if (run == null) { stopSelf(); return }
-            if (run.phase != FocusMachine.BREAK) check(prefs)
-            handler.postDelayed(this, 1_000)
+            if (run == null) { hideOverlay(); stopSelf(); return }
+            check(prefs, run)
+            handler.postDelayed(this, 700)
         }
     }
 
-    private fun check(prefs: com.aashwin.smartplanner.data.Prefs) {
+    private fun check(prefs: com.aashwin.smartplanner.data.Prefs, run: com.aashwin.smartplanner.data.FocusRun) {
         val now = System.currentTimeMillis()
-        val usm = getSystemService(UsageStatsManager::class.java) ?: return
-        val events = try { usm.queryEvents(now - 5_000, now) } catch (_: Exception) { return }
-        val e = UsageEvents.Event()
-        while (events.hasNextEvent()) {
-            events.getNextEvent(e)
-            if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) lastPkg = e.packageName
-        }
-        val pkg = lastPkg ?: return
-        if (pkg == packageName || pkg !in prefs.blockedApps) return
-        if (now < prefs.allowedUntil(pkg) || now - lastBlockAt < 1_500) return
-        lastBlockAt = now
-        lastPkg = null // shown once per visit; reopening the app triggers it again
-        try {
-            startActivity(
-                Intent(this, BlockActivity::class.java)
-                    .putExtra(BlockActivity.EXTRA_PKG, pkg)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-            )
+        val usm = getSystemService(UsageStatsManager::class.java)
+        if (usm != null) try {
+            val events = usm.queryEvents(now - 10_000, now)
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) foreground = e.packageName
+            }
         } catch (_: Exception) { }
+        val pkg = foreground
+        val block = run.phase != FocusMachine.BREAK && pkg != null && pkg != packageName &&
+            pkg in prefs.blockedApps && now >= prefs.allowedUntil(pkg)
+        if (block) showOverlay(pkg!!, prefs, run, now) else hideOverlay()
+    }
+
+    // ---- the "Back to work" screen, drawn on top of the blocked app ----
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun showOverlay(pkg: String, prefs: com.aashwin.smartplanner.data.Prefs, run: com.aashwin.smartplanner.data.FocusRun, now: Long) {
+        val left = run.msLeft(now) / 1000
+        val status = "Focusing on ${run.step.title}" + if (left > 0) " · %d:%02d left".format(left / 60, left % 60) else ""
+        if (overlay != null && overlayPkg == pkg) { overlayStatus?.text = status; return }
+        hideOverlay()
+        if (!Settings.canDrawOverlays(this)) return
+        val gold = 0xFFD4AF37.toInt()
+        val appName = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { "This app" }
+        val quote = Quotes.next(prefs, Quotes.BLOCKED)
+        fun text(t: String, size: Float, color: Int, bold: Boolean = false, italic: Boolean = false) = TextView(this).apply {
+            text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER
+            setTypeface(typeface, when { bold -> Typeface.BOLD; italic -> Typeface.ITALIC; else -> Typeface.NORMAL })
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        val statusView = text(status, 15f, 0xFFB0B0B0.toInt())
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF000000.toInt())
+            setPadding(dp(28), dp(28), dp(28), dp(28))
+            isClickable = true // swallow touches so the blocked app can't be used underneath
+            addView(text("FOCUS MODE", 13f, gold, bold = true))
+            addView(text("$appName is blocked", 26f, 0xFFF2F2F2.toInt(), bold = true))
+            addView(statusView)
+            if (quote != null) addView(text("\u201C$quote\u201D", 19f, gold, italic = true).apply { setPadding(0, dp(28), 0, dp(28)) })
+            addView(Button(this@BlockerService).apply {
+                text = "Back to work"; textSize = 17f; setTextColor(0xFF000000.toInt()); isAllCaps = false
+                background = GradientDrawable().apply { setColor(gold); cornerRadius = dp(28).toFloat() }
+                setOnClickListener {
+                    hideOverlay()
+                    try {
+                        startActivity(
+                            Intent(this@BlockerService, MainActivity::class.java)
+                                .putExtra(MainActivity.EXTRA_OPEN_FOCUS, true)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        )
+                    } catch (_: Exception) { }
+                }
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
+            addView(text("Emergency: allow 1 minute", 14f, 0xFF9E9E9E.toInt()).apply {
+                setPadding(0, dp(18), 0, dp(6))
+                setOnClickListener { prefs.allowAppUntil(pkg, System.currentTimeMillis() + 60_000L); hideOverlay() }
+            })
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.OPAQUE,
+        )
+        try {
+            getSystemService(WindowManager::class.java).addView(root, params)
+            overlay = root; overlayPkg = pkg; overlayStatus = statusView
+        } catch (_: Exception) { }
+    }
+
+    private fun hideOverlay() {
+        overlay?.let { try { getSystemService(WindowManager::class.java).removeView(it) } catch (_: Exception) { } }
+        overlay = null; overlayPkg = null; overlayStatus = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -116,6 +188,7 @@ class BlockerService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        hideOverlay()
         super.onDestroy()
     }
 

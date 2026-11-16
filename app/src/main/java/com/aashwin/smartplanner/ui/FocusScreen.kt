@@ -101,7 +101,13 @@ fun FocusScreen(vm: MainViewModel, initialTaskId: Long?, onClose: () -> Unit, on
     val weekMinutes = sessions.filter {
         !Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalDate().isBefore(today.minusDays(6))
     }.sumOf { it.minutes }
-    val blockerMissing = vm.prefs.blockedApps.isNotEmpty() && !FocusMode.blockerOn(ctx)
+    var resumeTick by remember { mutableIntStateOf(0) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { resumeTick++; onPauseOrDispose { } }
+    val blockerReady = remember(resumeTick) { FocusMode.blockerOn(ctx) }
+    val noApps = vm.prefs.blockedApps.isEmpty()
+    val blockerMissing = noApps || !blockerReady
+    // Make sure the blocker runs whenever a session is on (e.g. permissions granted after starting).
+    LaunchedEffect(run != null, resumeTick) { if (run != null) com.aashwin.smartplanner.blocker.BlockerService.start(ctx, vm.prefs) }
 
     Scaffold(
         topBar = {
@@ -250,7 +256,10 @@ fun FocusScreen(vm: MainViewModel, initialTaskId: Long?, onClose: () -> Unit, on
                         Text("Stop session")
                     }
                     if (blockerMissing) TextButton(onClick = onSetupBlocker, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text("App blocking is off. Set it up", color = MaterialTheme.colorScheme.error)
+                        Text(
+                            if (noApps) "No apps chosen to block. Choose apps" else "App blocking needs 2 permissions. Set it up",
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }

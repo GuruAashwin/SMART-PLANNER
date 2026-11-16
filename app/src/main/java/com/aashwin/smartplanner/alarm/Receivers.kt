@@ -73,7 +73,7 @@ class ActionReceiver : BroadcastReceiver() {
                 ACTION_COMPLETE -> repo.completeTask(taskId, completeSubtasks = true)
                 ACTION_SNOOZE -> repo.snooze(taskId, minutes)
                 ACTION_DISMISS -> repo.dismissAlarm(taskId)
-                ACTION_HABIT_DONE -> repo.setHabitDone(intent.getLongExtra(Scheduler.EXTRA_HABIT, 0), LocalDate.now(), true)
+                ACTION_HABIT_DONE -> repo.setHabitDone(intent.getLongExtra(Scheduler.EXTRA_HABIT, 0), repo.logicalToday(), true)
                 ACTION_FOCUS_STOP -> repo.stopFocus()
             }
         }

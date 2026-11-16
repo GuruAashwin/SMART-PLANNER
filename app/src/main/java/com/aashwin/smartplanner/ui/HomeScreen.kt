@@ -190,13 +190,14 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> 
         }
 
         if (habits.isNotEmpty()) item { Column {
+            val habitDay = vm.repo.logicalToday() // same 4 AM rule as the Habits screen
             SectionTitle("Habits")
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(habits, key = { it.habit.id }) { h ->
-                    val doneHabit = h.logs.any { it.day == todayDay }
+                    val doneHabit = h.logs.any { it.day == habitDay.toEpochDay() }
                     FilterChip(
                         selected = doneHabit,
-                        onClick = { vm.setHabit(h.habit.id, today, !doneHabit) },
+                        onClick = { vm.setHabit(h.habit.id, habitDay, !doneHabit) },
                         label = { Text(h.habit.name) },
                         leadingIcon = if (doneHabit) {
                             { Icon(Icons.Filled.Check, null, Modifier.height(FilterChipDefaults.IconSize)) }

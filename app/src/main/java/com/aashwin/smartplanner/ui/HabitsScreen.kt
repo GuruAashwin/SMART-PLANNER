@@ -42,30 +42,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aashwin.smartplanner.data.HabitCalc
 import com.aashwin.smartplanner.data.HabitWithLogs
 import com.aashwin.smartplanner.util.Fmt
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
-
-data class HabitStats(val current: Int, val best: Int, val week: Int, val weekDays: Int, val monthPercent: Int)
-
-fun habitStats(h: HabitWithLogs, today: LocalDate = LocalDate.now()): HabitStats {
-    val days = h.logs.map { it.day }.toSortedSet()
-    val t = today.toEpochDay()
-    var d = if (t in days) t else t - 1
-    var current = 0
-    while (d in days) { current++; d-- }
-    var best = 0; var streak = 0; var prev = Long.MIN_VALUE
-    for (x in days) { streak = if (x == prev + 1) streak + 1 else 1; best = maxOf(best, streak); prev = x }
-    val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toEpochDay()
-    val week = days.count { it in monday..t }
-    val created = java.time.Instant.ofEpochMilli(h.habit.createdAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
-    val windowStart = maxOf(t - 29, minOf(created, days.firstOrNull() ?: created))
-    val windowLen = (t - windowStart + 1).coerceAtLeast(1)
-    val month = days.count { it in windowStart..t }
-    return HabitStats(current, best, week, (t - monday + 1).toInt(), (month * 100 / windowLen).toInt())
-}
 
 /** Add or edit a habit: name + optional daily reminder (shown only if it isn't done yet that day). */
 @Composable
@@ -127,7 +109,10 @@ fun HabitsScreen(vm: MainViewModel) {
     val habits by vm.habits.collectAsState()
     var editing by remember { mutableStateOf<HabitWithLogs?>(null) }
     var deleting by remember { mutableStateOf<HabitWithLogs?>(null) }
-    val today = LocalDate.now()
+    // Habits use your day: until the day-start hour (default 4 AM) it is still "yesterday",
+    // so ticking a late-night session at 12:30 AM keeps the streak.
+    val today = vm.repo.logicalToday()
+    val zone = java.time.ZoneId.systemDefault()
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp)) {
         item {
@@ -141,8 +126,9 @@ fun HabitsScreen(vm: MainViewModel) {
             }
         }
         items(habits, key = { it.habit.id }) { h ->
-            val s = habitStats(h, today)
             val logged = h.logs.map { it.day }.toSet()
+            val created = java.time.Instant.ofEpochMilli(h.habit.createdAt).atZone(zone).toLocalDate().toEpochDay()
+            val s = HabitCalc.stats(logged, created, today.toEpochDay(), today.dayOfWeek.value)
             Surface(
                 Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(16.dp)).clickable { editing = h },
                 shape = RoundedCornerShape(16.dp),
@@ -154,15 +140,25 @@ fun HabitsScreen(vm: MainViewModel) {
                             Text(h.habit.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Filled.LocalFireDepartment, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                                Text(" ${s.current} day streak · best ${s.best}", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    " ${s.current} day${if (s.current == 1) "" else "s"} streak · best ${s.best}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
                             }
+                            if (s.atRisk) Text(
+                                "Do it today to keep the streak",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                            )
                             Text(
-                                "This week ${s.week}/${s.weekDays} · Last 30 days ${s.monthPercent}%" +
-                                    (h.habit.reminderMinutes?.let { " · ${Fmt.time(it)}" } ?: ""),
+                                listOfNotNull(
+                                    if (s.weekDays > 0) "This week ${s.week}/${s.weekDays}" else null,
+                                    s.monthPercent?.let { "Last 30 days $it%" } ?: "New habit",
+                                    h.habit.reminderMinutes?.let { "Reminder ${Fmt.time(it)}" },
+                                ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        val doneToday = today.toEpochDay() in logged
+                        val doneToday = s.doneToday
                         FilledIconToggleButton(
                             checked = doneToday,
                             onCheckedChange = { vm.setHabit(h.habit.id, today, it) },

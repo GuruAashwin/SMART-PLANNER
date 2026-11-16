@@ -288,7 +288,7 @@ fun SettingsScreen(vm: MainViewModel) {
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text(
-            "Smart Planner 1.2 · All data stays on this phone. No account, no internet needed.",
+            "Smart Planner 1.2.1 · All data stays on this phone. No account, no internet needed.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(96.dp))

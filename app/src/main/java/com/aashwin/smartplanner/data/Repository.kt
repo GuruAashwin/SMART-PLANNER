@@ -297,14 +297,14 @@ class Repository(
     suspend fun setHabitDone(habitId: Long, day: LocalDate, done: Boolean) {
         if (done) dao.insertHabitLog(HabitLogEntity(habitId, day.toEpochDay()))
         else dao.deleteHabitLog(habitId, day.toEpochDay())
-        if (done && day == LocalDate.now()) Notifier.cancelHabit(ctx, habitId)
+        if (done && day == logicalToday()) Notifier.cancelHabit(ctx, habitId)
     }
 
     /** Daily habit reminder: only shown if the habit isn't done yet today. */
     suspend fun habitAlert(habitId: Long) {
         val h = dao.getHabit(habitId) ?: return
         if (h.reminderMinutes == null) return
-        if (dao.habitDoneCount(habitId, LocalDate.now().toEpochDay()) == 0) Notifier.showHabit(ctx, h)
+        if (dao.habitDoneCount(habitId, logicalToday().toEpochDay()) == 0) Notifier.showHabit(ctx, h)
         Scheduler.scheduleHabit(ctx, h)
     }
 

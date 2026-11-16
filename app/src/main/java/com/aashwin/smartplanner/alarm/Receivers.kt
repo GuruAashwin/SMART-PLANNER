@@ -32,6 +32,7 @@ class AlertReceiver : BroadcastReceiver() {
                 Scheduler.KIND_ROLLOVER -> { repo.rollover(); return@runAsync }
                 Scheduler.KIND_SUMMARY -> { repo.showSummary(); return@runAsync }
                 Scheduler.KIND_HABIT -> { repo.habitAlert(intent.getLongExtra(Scheduler.EXTRA_HABIT, 0)); return@runAsync }
+                Scheduler.KIND_FOCUS -> { repo.finishFocus(); return@runAsync }
             }
             val full = repo.getTask(taskId) ?: return@runAsync
             val task = full.task
@@ -73,6 +74,7 @@ class ActionReceiver : BroadcastReceiver() {
                 ACTION_SNOOZE -> repo.snooze(taskId, minutes)
                 ACTION_DISMISS -> repo.dismissAlarm(taskId)
                 ACTION_HABIT_DONE -> repo.setHabitDone(intent.getLongExtra(Scheduler.EXTRA_HABIT, 0), LocalDate.now(), true)
+                ACTION_FOCUS_STOP -> repo.stopFocus()
             }
         }
     }
@@ -82,6 +84,7 @@ class ActionReceiver : BroadcastReceiver() {
         const val ACTION_SNOOZE = "com.aashwin.smartplanner.SNOOZE"
         const val ACTION_DISMISS = "com.aashwin.smartplanner.DISMISS"
         const val ACTION_HABIT_DONE = "com.aashwin.smartplanner.HABIT_DONE"
+        const val ACTION_FOCUS_STOP = "com.aashwin.smartplanner.FOCUS_STOP"
         const val EXTRA_MINUTES = "minutes"
     }
 }

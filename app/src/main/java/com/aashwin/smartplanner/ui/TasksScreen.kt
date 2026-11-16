@@ -49,7 +49,7 @@ import java.time.LocalDate
 private val FILTERS = listOf("Active", "Today", "Upcoming", "Overdue", "Someday", "Done")
 
 @Composable
-fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
+fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onFocus: (Long) -> Unit = {}) {
     val tasks by vm.tasks.collectAsState()
     val categories by vm.categories.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
@@ -57,7 +57,7 @@ fun TasksScreen(vm: MainViewModel, onOpen: (Long) -> Unit) {
     var priority by rememberSaveable { mutableStateOf(-1) }
     var categoryId by rememberSaveable { mutableStateOf(-1L) }
     var menu by remember { mutableStateOf(false) }
-    val actions = rememberTaskActions(vm, onOpen)
+    val actions = rememberTaskActions(vm, onOpen, onFocus)
 
     val now = System.currentTimeMillis()
     val today = LocalDate.now().toEpochDay()

@@ -137,6 +137,16 @@ data class HabitLogEntity(
     val day: Long,
 )
 
+/** A finished focus (Pomodoro) session, for the focus history. */
+@Entity(tableName = "focus_sessions")
+data class FocusSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val taskId: Long? = null,
+    val title: String,
+    val startedAt: Long,
+    val minutes: Int,
+)
+
 data class TaskFull(
     @Embedded val task: TaskEntity,
     @Relation(parentColumn = "id", entityColumn = "taskId")

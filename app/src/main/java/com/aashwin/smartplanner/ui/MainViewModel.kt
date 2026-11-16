@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aashwin.smartplanner.PlannerApp
 import com.aashwin.smartplanner.data.CategoryEntity
+import com.aashwin.smartplanner.data.FocusSessionEntity
 import com.aashwin.smartplanner.data.HabitWithLogs
 import com.aashwin.smartplanner.data.SubtaskEntity
 import com.aashwin.smartplanner.data.TaskEntity
@@ -33,6 +34,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val habits: StateFlow<List<HabitWithLogs>> =
         repo.habits.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val focusSessions: StateFlow<List<FocusSessionEntity>> =
+        repo.focusSessions.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun startFocus(taskId: Long?, title: String, minutes: Int, isBreak: Boolean) =
+        repo.startFocus(taskId, title, minutes, isBreak)
+    fun stopFocus() = viewModelScope.launch { repo.stopFocus() }
+    fun finishFocus() = viewModelScope.launch { repo.finishFocus() }
+
     private val _messages = MutableSharedFlow<UiMessage>(extraBufferCapacity = 4)
     val messages: SharedFlow<UiMessage> = _messages
 
@@ -53,6 +62,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun undo(u: Undo) = viewModelScope.launch { repo.undo(u) }
 
     fun uncomplete(id: Long) = viewModelScope.launch { repo.uncompleteTask(id) }
+    fun toggleSubtask(id: Long) = viewModelScope.launch {
+        repo.toggleSubtask(id)?.let { _messages.emit(UiMessage("Checklist done · task completed", it)) }
+    }
     fun postpone(id: Long) = viewModelScope.launch { repo.postponeOneDay(id) }
     fun moveToToday(ids: List<Long>) = viewModelScope.launch {
         repo.moveToToday(ids)

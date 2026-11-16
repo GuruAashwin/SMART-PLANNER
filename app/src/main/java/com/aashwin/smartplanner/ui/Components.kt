@@ -1,6 +1,7 @@
 package com.aashwin.smartplanner.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +93,8 @@ class TaskActions(
     val postpone: (Long) -> Unit,
     val moveToToday: (Long) -> Unit,
     val delete: (Long) -> Unit,
+    val toggleSubtask: (Long) -> Unit,
+    val focus: (Long) -> Unit,
 )
 
 /**
@@ -99,7 +102,7 @@ class TaskActions(
  * Complete and Delete show an Undo snackbar (handled in AppRoot).
  */
 @Composable
-fun rememberTaskActions(vm: MainViewModel, onOpen: (Long) -> Unit): TaskActions {
+fun rememberTaskActions(vm: MainViewModel, onOpen: (Long) -> Unit, onFocus: (Long) -> Unit = {}): TaskActions {
     var asking by remember { mutableStateOf<TaskFull?>(null) }
     asking?.let { f ->
         val left = f.subtasks.count { !it.done }
@@ -116,7 +119,7 @@ fun rememberTaskActions(vm: MainViewModel, onOpen: (Long) -> Unit): TaskActions 
             },
         )
     }
-    return remember(vm, onOpen) {
+    return remember(vm, onOpen, onFocus) {
         TaskActions(
             toggle = { f ->
                 when {
@@ -129,6 +132,8 @@ fun rememberTaskActions(vm: MainViewModel, onOpen: (Long) -> Unit): TaskActions 
             postpone = { vm.postpone(it) },
             moveToToday = { vm.moveToToday(listOf(it)) },
             delete = { vm.delete(it) },
+            toggleSubtask = { vm.toggleSubtask(it) },
+            focus = onFocus,
         )
     }
 }
@@ -140,9 +145,11 @@ fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifie
     val done = t.status != Status.PENDING
     val overdue = t.isOverdue()
     var menu by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
     Box(modifier) {
+      Column {
         Row(
             Modifier.fillMaxWidth()
                 .combinedClickable(onClick = { actions.open(t.id) }, onLongClick = { menu = true })
@@ -171,17 +178,44 @@ fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifie
                     }
                     if (!done) PriorityTag(t.priority)
                     if (categoryName != null) Meta(categoryName)
-                    if (full.subtasks.isNotEmpty()) Meta("${full.subtasks.count { it.done }}/${full.subtasks.size}")
+                    if (full.subtasks.isNotEmpty()) {
+                        // Tap the count to tick checklist items right here, without opening the task.
+                        Text(
+                            (if (expanded) "▴ " else "▾ ") + "${full.subtasks.count { it.done }}/${full.subtasks.size}",
+                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { expanded = !expanded },
+                        )
+                    }
                     if (t.alarmEnabled && !done) MetaIcon(Icons.Filled.Alarm, "Alarm")
                     if (t.isRecurring) MetaIcon(Icons.Filled.Repeat, "Repeats")
                     if (!done && t.postponeCount >= 3) Meta("postponed ${t.postponeCount}×", MaterialTheme.colorScheme.primary)
                 }
             }
         }
+        if (expanded) {
+            full.sortedSubtasks.forEach { s ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { actions.toggleSubtask(s.id) }.padding(start = 48.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (s.done) Icon(Icons.Filled.CheckCircle, "Undo", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                    else Icon(Icons.Outlined.Circle, "Done", Modifier.size(18.dp), tint = muted)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        s.title, style = MaterialTheme.typography.bodyMedium,
+                        color = if (s.done) muted else MaterialTheme.colorScheme.onSurface,
+                        textDecoration = if (s.done) TextDecoration.LineThrough else null,
+                    )
+                }
+            }
+        }
+      }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (!done) {
                 if (overdue) DropdownMenuItem(text = { Text("Move to today") }, onClick = { menu = false; actions.moveToToday(t.id) })
                 DropdownMenuItem(text = { Text("Postpone 1 day") }, onClick = { menu = false; actions.postpone(t.id) })
+                DropdownMenuItem(text = { Text("Start focus session") }, onClick = { menu = false; actions.focus(t.id) })
             }
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; actions.delete(t.id) })
         }

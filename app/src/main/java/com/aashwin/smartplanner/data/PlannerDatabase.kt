@@ -10,9 +10,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         TaskEntity::class, SubtaskEntity::class, ReminderEntity::class,
-        CategoryEntity::class, HabitEntity::class, HabitLogEntity::class,
+        CategoryEntity::class, HabitEntity::class, HabitLogEntity::class, FocusSessionEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class PlannerDatabase : RoomDatabase() {
@@ -27,9 +27,19 @@ abstract class PlannerDatabase : RoomDatabase() {
             }
         }
 
+        /** v3: focus session history. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `focus_sessions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`taskId` INTEGER, `title` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `minutes` INTEGER NOT NULL)"
+                )
+            }
+        }
+
         fun create(context: Context): PlannerDatabase =
             Room.databaseBuilder(context, PlannerDatabase::class.java, "planner.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

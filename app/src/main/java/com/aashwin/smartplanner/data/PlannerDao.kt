@@ -103,6 +103,13 @@ interface PlannerDao {
     @Query("DELETE FROM habit_logs WHERE habitId = :habitId AND day = :day")
     suspend fun deleteHabitLog(habitId: Long, day: Long)
 
+    // ---- focus ----
+    @Insert
+    suspend fun insertFocus(session: FocusSessionEntity): Long
+
+    @Query("SELECT * FROM focus_sessions WHERE startedAt >= :since ORDER BY startedAt DESC")
+    fun observeFocus(since: Long): Flow<List<FocusSessionEntity>>
+
     // ---- backup ----
     @Query("SELECT * FROM tasks") suspend fun allTasks(): List<TaskEntity>
     @Query("SELECT * FROM subtasks") suspend fun allSubtasks(): List<SubtaskEntity>

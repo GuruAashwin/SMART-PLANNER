@@ -79,7 +79,7 @@ private fun buildHome(tasks: List<TaskFull>, today: LocalDate, now: Long): HomeD
 }
 
 @Composable
-fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> Unit) {
+fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> Unit, onFocus: (Long) -> Unit = {}) {
     val tasks by vm.tasks.collectAsState()
     val categories by vm.categories.collectAsState()
     val habits by vm.habits.collectAsState()
@@ -89,7 +89,8 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> 
     LifecycleResumeEffect(Unit) { resumeTick++; onPauseOrDispose { } }
     var showDone by rememberSaveable { mutableStateOf(false) }
     var reliabilityDone by remember { mutableStateOf(vm.prefs.reliabilityDone) }
-    val actions = rememberTaskActions(vm, onOpen)
+    val actions = rememberTaskActions(vm, onOpen, onFocus)
+    val focus by vm.prefs.focus.collectAsState()
 
     val today = LocalDate.now()
     val todayDay = today.toEpochDay()
@@ -174,6 +175,15 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> 
                             "${it.task.title} · ${Fmt.due(it.task.date, it.task.dueMinutes)}",
                             style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
                         )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        val f = focus
+                        TextButton(onClick = { onFocus(d.next?.task?.id ?: -1L) }) {
+                            Text(
+                                if (f != null) (if (f.isBreak) "Break running · open" else "Focus running · open")
+                                else "Start focus"
+                            )
+                        }
                     }
                 }
             }

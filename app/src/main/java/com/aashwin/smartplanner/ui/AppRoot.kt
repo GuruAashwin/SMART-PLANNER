@@ -69,7 +69,7 @@ private val TABS = listOf(
 )
 
 @Composable
-fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
+fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit, openSpecial: String? = null, onSpecialHandled: () -> Unit = {}) {
     val onboarded by vm.prefs.onboarded.collectAsState()
     if (!onboarded) {
         Onboarding(vm)
@@ -103,6 +103,15 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
     }
 
     fun openEditor(id: Long) { draft = null; nav.navigate("edit/$id") }
+    fun openFocus(taskId: Long) = nav.navigate("focus?taskId=$taskId") { launchSingleTop = true }
+
+    // Opened from the widget (+ button) or the focus notification.
+    LaunchedEffect(openSpecial) {
+        when (openSpecial) {
+            "quickadd" -> { quickAdd = true; onSpecialHandled() }
+            "focus" -> { openFocus(-1L); onSpecialHandled() }
+        }
+    }
     fun openTab(r: String) = nav.navigate(r) {
         popUpTo("home") { saveState = true }
         launchSingleTop = true
@@ -112,7 +121,7 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!route.startsWith("edit")) {
+            if (!route.startsWith("edit") && !route.startsWith("focus")) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                     TABS.forEach { tab ->
                         NavigationBarItem(
@@ -138,13 +147,19 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit) {
         },
     ) { pad ->
         NavHost(nav, startDestination = "home", modifier = Modifier.padding(pad)) {
-            composable("home") { HomeScreen(vm, ::openEditor, onOpenSettings = { openTab("settings") }) }
-            composable("tasks") { TasksScreen(vm, ::openEditor) }
+            composable("home") { HomeScreen(vm, ::openEditor, onOpenSettings = { openTab("settings") }, onFocus = ::openFocus) }
+            composable("tasks") { TasksScreen(vm, ::openEditor, onFocus = ::openFocus) }
             composable("habits") { HabitsScreen(vm) }
             composable("calendar") {
-                CalendarScreen(vm, calendarDay, onSelect = { calendarDay = it }, onOpen = ::openEditor)
+                CalendarScreen(vm, calendarDay, onSelect = { calendarDay = it }, onOpen = ::openEditor, onFocus = ::openFocus)
             }
             composable("settings") { SettingsScreen(vm) }
+            composable(
+                "focus?taskId={taskId}",
+                arguments = listOf(navArgument("taskId") { type = NavType.LongType; defaultValue = -1L }),
+            ) { entry ->
+                FocusScreen(vm, entry.arguments?.getLong("taskId"), onClose = { nav.popBackStack() })
+            }
             composable("edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                 val id = entry.arguments?.getLong("id") ?: 0L
                 EditorScreen(vm, id, draft, onClose = { nav.popBackStack() })

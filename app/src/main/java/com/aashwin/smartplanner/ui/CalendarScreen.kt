@@ -50,11 +50,12 @@ fun CalendarScreen(
     selected: LocalDate,
     onSelect: (LocalDate) -> Unit,
     onOpen: (Long) -> Unit,
+    onFocus: (Long) -> Unit = {},
 ) {
     val tasks by vm.tasks.collectAsState()
     val categories by vm.categories.collectAsState()
     val habits by vm.habits.collectAsState()
-    val actions = rememberTaskActions(vm, onOpen)
+    val actions = rememberTaskActions(vm, onOpen, onFocus)
     val catNames = remember(categories) { categories.associate { it.id to it.name } }
     val today = LocalDate.now()
     val month = selected.withDayOfMonth(1)

@@ -24,6 +24,9 @@ object Notifier {
     /** Alarm notifications are silent: [AlarmService] plays the sound itself, which is far more reliable. */
     const val CH_ALARMS = "alarms_live"
     const val CH_DAILY = "daily"
+    const val CH_FOCUS = "focus"
+    private const val FOCUS_RUNNING_ID = 999_995
+    private const val FOCUS_DONE_ID = 999_997
     private const val OLD_ALARM_PREFIX = "alarms_v"
     private val GOLD = 0xFFD4AF37.toInt()
 
@@ -46,6 +49,12 @@ object Notifier {
                 enableVibration(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setBypassDnd(true)
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_FOCUS, "Focus timer", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Countdown while a focus session runs"
+                setShowBadge(false)
             }
         )
         nm.createNotificationChannel(
@@ -200,6 +209,51 @@ object Notifier {
             .build()
         post(ctx, habitNotificationId(habit.id), n)
     }
+
+    private fun openFocus(ctx: Context): PendingIntent = PendingIntent.getActivity(
+        ctx, 9,
+        Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_FOCUS, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    /** Quiet ongoing notification with a live countdown while a focus session runs. */
+    fun showFocusRunning(ctx: Context, title: String, endAt: Long, isBreak: Boolean) {
+        val stop = PendingIntent.getBroadcast(
+            ctx, 10, Intent(ctx, ActionReceiver::class.java).setAction(ActionReceiver.ACTION_FOCUS_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val n = NotificationCompat.Builder(ctx, CH_FOCUS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(GOLD)
+            .setContentTitle(if (isBreak) "Break" else "Focus" + if (title.isNotBlank()) " · $title" else "")
+            .setContentText("Ends at " + Fmt.time(java.time.Instant.ofEpochMilli(endAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime()))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setWhen(endAt)
+            .setShowWhen(true)
+            .setContentIntent(openFocus(ctx))
+            .addAction(0, "Stop", stop)
+            .build()
+        post(ctx, FOCUS_RUNNING_ID, n)
+    }
+
+    fun showFocusDone(ctx: Context, title: String, minutes: Int, isBreak: Boolean) {
+        val n = NotificationCompat.Builder(ctx, CH_REMINDERS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(GOLD)
+            .setContentTitle(if (isBreak) "Break over" else "Focus done · $minutes min")
+            .setContentText(if (isBreak) "Ready for the next session?" else (if (title.isNotBlank()) "$title · " else "") + "Take a short break.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openFocus(ctx))
+            .build()
+        post(ctx, FOCUS_DONE_ID, n)
+    }
+
+    fun cancelFocusRunning(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(FOCUS_RUNNING_ID)
 
     fun cancelHabit(ctx: Context, habitId: Long) = NotificationManagerCompat.from(ctx).cancel(habitNotificationId(habitId))
 

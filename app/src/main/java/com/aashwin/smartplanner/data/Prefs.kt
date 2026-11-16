@@ -4,6 +4,10 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
+data class FocusState(val taskId: Long?, val title: String, val startAt: Long, val endAt: Long, val isBreak: Boolean) {
+    val totalMinutes: Int get() = ((endAt - startAt) / 60_000L).toInt()
+}
+
 /** Local profile + preferences (no account needed). */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("profile", Context.MODE_PRIVATE)
@@ -48,6 +52,35 @@ class Prefs(context: Context) {
     var alarmToneUri: String?
         get() = sp.getString("alarmTone", null)
         set(v) = sp.edit().putString("alarmTone", v).apply()
+
+    // ---- running focus session (kept here so it survives the app being closed) ----
+    private val _focus = MutableStateFlow(readFocus())
+    val focus: StateFlow<FocusState?> = _focus
+
+    private fun readFocus(): FocusState? {
+        val end = sp.getLong("focusEnd", 0L)
+        if (end == 0L) return null
+        return FocusState(
+            taskId = sp.getLong("focusTask", 0L).takeIf { it != 0L },
+            title = sp.getString("focusTitle", "") ?: "",
+            startAt = sp.getLong("focusStart", 0L),
+            endAt = end,
+            isBreak = sp.getBoolean("focusBreak", false),
+        )
+    }
+
+    fun setFocus(f: FocusState?) {
+        val e = sp.edit()
+        if (f == null) e.putLong("focusEnd", 0L) else e
+            .putLong("focusTask", f.taskId ?: 0L).putString("focusTitle", f.title)
+            .putLong("focusStart", f.startAt).putLong("focusEnd", f.endAt).putBoolean("focusBreak", f.isBreak)
+        e.apply()
+        _focus.value = f
+    }
+
+    var focusMinutes: Int
+        get() = sp.getInt("focusMinutes", 25)
+        set(v) = sp.edit().putInt("focusMinutes", v).apply()
 
     fun setName(v: String) { sp.edit().putString("name", v).apply(); _name.value = v }
     fun setTheme(v: Int) { sp.edit().putInt("theme", v).apply(); _theme.value = v }

@@ -26,6 +26,7 @@ object Scheduler {
     const val KIND_ROLLOVER = 3
     const val KIND_SUMMARY = 4
     const val KIND_HABIT = 5
+    const val KIND_FOCUS = 6
 
     const val EXTRA_KIND = "kind"
     const val EXTRA_TASK = "taskId"
@@ -135,4 +136,8 @@ object Scheduler {
     }
 
     fun cancelHabit(ctx: Context, habitId: Long) = cancelPending(ctx, KIND_HABIT, habitId, habitId)
+
+    /** End of a focus session: exact, so the "time's up" sound comes on the minute. */
+    fun scheduleFocus(ctx: Context, at: Long) = setAlarmClock(ctx, at, pending(ctx, KIND_FOCUS, 0, 0))
+    fun cancelFocus(ctx: Context) = cancelPending(ctx, KIND_FOCUS, 0, 0)
 }

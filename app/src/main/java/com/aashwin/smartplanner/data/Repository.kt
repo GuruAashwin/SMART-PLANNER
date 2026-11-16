@@ -117,6 +117,18 @@ class Repository(
         Scheduler.schedule(ctx, t, full.reminders)
     }
 
+    /** Ticks a checklist item. Returns an Undo if that finished the whole task. */
+    suspend fun toggleSubtask(subId: Long): Undo? = lock.withLock {
+        val s = dao.getSubtask(subId) ?: return@withLock null
+        val before = dao.getTaskFull(s.taskId)
+        dao.updateSubtask(s.copy(done = !s.done))
+        val full = dao.getTaskFull(s.taskId) ?: return@withLock null
+        if (full.task.status == Status.PENDING && full.subtasks.isNotEmpty() && full.subtasks.all { it.done }) {
+            val created = completeInternal(full.task.id, completeSubtasks = false)
+            before?.let { Undo(it, created) }
+        } else null
+    }
+
     /** Snooze never completes the task; it only schedules another alert (and is not counted as postponing). */
     suspend fun snooze(id: Long, minutes: Int) = lock.withLock {
         val full = dao.getTaskFull(id) ?: return@withLock
@@ -233,6 +245,12 @@ class Repository(
         Scheduler.scheduleRollover(ctx, prefs.dayStartHour)
         scheduleSummary()
         dao.allHabits().forEach { Scheduler.scheduleHabit(ctx, it) }
+        prefs.focus.value?.let { f ->
+            if (f.endAt > System.currentTimeMillis()) {
+                Scheduler.scheduleFocus(ctx, f.endAt)
+                Notifier.showFocusRunning(ctx, f.title, f.endAt, f.isBreak)
+            }
+        }
     }
 
     fun scheduleSummary() {
@@ -288,6 +306,43 @@ class Repository(
         if (h.reminderMinutes == null) return
         if (dao.habitDoneCount(habitId, LocalDate.now().toEpochDay()) == 0) Notifier.showHabit(ctx, h)
         Scheduler.scheduleHabit(ctx, h)
+    }
+
+    // ---------------- focus timer ----------------
+
+    val focusSessions: Flow<List<FocusSessionEntity>> =
+        dao.observeFocus(System.currentTimeMillis() - 31L * 24 * 3600 * 1000)
+
+    suspend fun allTasks(): List<TaskFull> = dao.allTasksFull()
+
+    /** Starts a focus session (or a break). It keeps running if the app is closed; an alarm marks the end. */
+    fun startFocus(taskId: Long?, title: String, minutes: Int, isBreak: Boolean) {
+        val now = System.currentTimeMillis()
+        val f = FocusState(taskId, title, now, now + minutes * 60_000L, isBreak)
+        prefs.setFocus(f)
+        if (!isBreak) prefs.focusMinutes = minutes
+        Scheduler.scheduleFocus(ctx, f.endAt)
+        Notifier.showFocusRunning(ctx, title, f.endAt, isBreak)
+    }
+
+    /** Stopped early: the minutes already done still count (if at least 1 and not a break). */
+    suspend fun stopFocus() {
+        val f = prefs.focus.value ?: return
+        Scheduler.cancelFocus(ctx)
+        Notifier.cancelFocusRunning(ctx)
+        prefs.setFocus(null)
+        val done = ((System.currentTimeMillis() - f.startAt) / 60_000L).toInt()
+        if (!f.isBreak && done >= 1) dao.insertFocus(FocusSessionEntity(taskId = f.taskId, title = f.title, startedAt = f.startAt, minutes = done))
+    }
+
+    /** Called by the end-of-session alarm (and on app start, in case the phone was off at that moment). */
+    suspend fun finishFocus() {
+        val f = prefs.focus.value ?: return
+        if (System.currentTimeMillis() < f.endAt - 2_000L) return
+        prefs.setFocus(null)
+        Notifier.cancelFocusRunning(ctx)
+        if (!f.isBreak) dao.insertFocus(FocusSessionEntity(taskId = f.taskId, title = f.title, startedAt = f.startAt, minutes = f.totalMinutes))
+        Notifier.showFocusDone(ctx, f.title, f.totalMinutes, f.isBreak)
     }
 
     // ---------------- backup ----------------

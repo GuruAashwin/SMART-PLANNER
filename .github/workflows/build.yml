@@ -17,9 +17,11 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
       - name: Build APK
+        shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee build.log
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk SmartPlanner.apk
       - name: Upload artifact
@@ -35,3 +37,12 @@ jobs:
           body: Download SmartPlanner.apk below and open it on your Android phone to install.
           files: SmartPlanner.apk
           make_latest: true
+      - name: Publish build log if the build failed
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-log
+          name: Last failed build log
+          body: Log of the most recent failed build (for debugging).
+          files: build.log
+          prerelease: true

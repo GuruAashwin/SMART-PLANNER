@@ -19,6 +19,7 @@ import com.aashwin.smartplanner.ui.isDark
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
     private val openTask = mutableStateOf<Long?>(null)
+    private val openSpecial = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +35,10 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
             PlannerTheme(theme) {
-                AppRoot(vm, openTask.value, onOpenHandled = { openTask.value = null })
+                AppRoot(
+                    vm, openTask.value, onOpenHandled = { openTask.value = null },
+                    openSpecial = openSpecial.value, onSpecialHandled = { openSpecial.value = null },
+                )
             }
         }
     }
@@ -47,9 +51,13 @@ class MainActivity : ComponentActivity() {
     private fun handle(intent: Intent?) {
         val id = intent?.getLongExtra(EXTRA_OPEN_TASK, 0L) ?: 0L
         if (id > 0) openTask.value = id
+        if (intent?.getBooleanExtra(EXTRA_QUICK_ADD, false) == true) openSpecial.value = "quickadd"
+        if (intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true) openSpecial.value = "focus"
     }
 
     companion object {
         const val EXTRA_OPEN_TASK = "openTask"
+        const val EXTRA_QUICK_ADD = "quickAdd"
+        const val EXTRA_OPEN_FOCUS = "openFocus"
     }
 }

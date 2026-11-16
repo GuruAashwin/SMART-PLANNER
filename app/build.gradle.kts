@@ -13,8 +13,8 @@ android {
         applicationId = "com.aashwin.smartplanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     signingConfigs {
@@ -63,6 +63,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.5")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
 
     val room = "2.6.1"
     implementation("androidx.room:room-runtime:$room")

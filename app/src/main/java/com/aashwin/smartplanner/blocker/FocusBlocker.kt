@@ -1,9 +1,22 @@
 package com.aashwin.smartplanner.blocker
 
-import android.accessibilityservice.AccessibilityService
+import android.app.AppOpsManager
+import android.app.Service
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.Bundle
-import android.view.accessibility.AccessibilityEvent
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Process
+import android.provider.Settings
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import com.aashwin.smartplanner.alarm.Notifier
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -40,27 +53,94 @@ import com.aashwin.smartplanner.util.Quotes
 import kotlinx.coroutines.delay
 
 /**
- * The app blocker. Android tells it only which app came to the front (it never reads the screen).
- * Outside a focus session, and during breaks, it does nothing.
+ * The app blocker. Runs only during a focus session the user started (with the focus
+ * notification showing). Once a second it asks Android which app came to the front
+ * (Usage access) and, if it is one you chose to block, shows "Back to work" over it
+ * (Display over other apps). It never reads what is on the screen. Breaks are free time.
  */
-class FocusBlockerService : AccessibilityService() {
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName) return
-        val prefs = (application as PlannerApp).repository.prefs
-        val run = prefs.focus.value ?: return
-        if (run.phase == FocusMachine.BREAK) return
-        if (pkg !in prefs.blockedApps) return
-        if (System.currentTimeMillis() < prefs.allowedUntil(pkg)) return
-        startActivity(
-            Intent(this, BlockActivity::class.java)
-                .putExtra(BlockActivity.EXTRA_PKG, pkg)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-        )
+class BlockerService : Service() {
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastPkg: String? = null
+    private var lastBlockAt = 0L
+
+    private val tick = object : Runnable {
+        override fun run() {
+            val prefs = (application as PlannerApp).repository.prefs
+            val run = prefs.focus.value
+            if (run == null) { stopSelf(); return }
+            if (run.phase != FocusMachine.BREAK) check(prefs)
+            handler.postDelayed(this, 1_000)
+        }
     }
 
-    override fun onInterrupt() {}
+    private fun check(prefs: com.aashwin.smartplanner.data.Prefs) {
+        val now = System.currentTimeMillis()
+        val usm = getSystemService(UsageStatsManager::class.java) ?: return
+        val events = try { usm.queryEvents(now - 5_000, now) } catch (_: Exception) { return }
+        val e = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) lastPkg = e.packageName
+        }
+        val pkg = lastPkg ?: return
+        if (pkg == packageName || pkg !in prefs.blockedApps) return
+        if (now < prefs.allowedUntil(pkg) || now - lastBlockAt < 1_500) return
+        lastBlockAt = now
+        lastPkg = null // shown once per visit; reopening the app triggers it again
+        try {
+            startActivity(
+                Intent(this, BlockActivity::class.java)
+                    .putExtra(BlockActivity.EXTRA_PKG, pkg)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            )
+        } catch (_: Exception) { }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val repo = (application as PlannerApp).repository
+        val run = repo.prefs.focus.value
+        if (run == null) { stopSelf(); return START_NOT_STICKY }
+        // Shares the focus notification, so there is still just one notification on screen.
+        try {
+            ServiceCompat.startForeground(
+                this, Notifier.FOCUS_RUNNING_ID, Notifier.buildFocusRunning(this, run),
+                if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
+            )
+        } catch (_: Exception) { stopSelf(); return START_NOT_STICKY }
+        handler.removeCallbacks(tick)
+        handler.post(tick)
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacks(tick)
+        super.onDestroy()
+    }
+
+    companion object {
+        /** Both permissions the blocker needs: see which app is open, and show the block screen over it. */
+        fun ready(ctx: Context): Boolean = hasUsageAccess(ctx) && Settings.canDrawOverlays(ctx)
+
+        fun hasUsageAccess(ctx: Context): Boolean {
+            val ops = ctx.getSystemService(AppOpsManager::class.java) ?: return false
+            @Suppress("DEPRECATION")
+            val mode = if (Build.VERSION.SDK_INT >= 29) ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
+            else ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
+            return mode == AppOpsManager.MODE_ALLOWED
+        }
+
+        /** Called when focus starts (app in the foreground). Does nothing if no apps are chosen or permissions are missing. */
+        fun start(ctx: Context, prefs: com.aashwin.smartplanner.data.Prefs) {
+            if (prefs.blockedApps.isEmpty() || !ready(ctx)) return
+            try { ContextCompat.startForegroundService(ctx, Intent(ctx, BlockerService::class.java)) } catch (_: Exception) { }
+        }
+
+        fun stop(ctx: Context) {
+            try { ctx.stopService(Intent(ctx, BlockerService::class.java)) } catch (_: Exception) { }
+        }
+    }
 }
 
 /** Shown instead of a blocked app while focusing: "Back to work", or a 1-minute emergency pass. */

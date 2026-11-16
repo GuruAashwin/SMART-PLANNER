@@ -28,7 +28,7 @@ object Notifier {
     const val CH_DAILY = "daily"
     const val CH_FOCUS = "focus"
     const val CH_FOCUS_ALERT = "focus_alerts"
-    private const val FOCUS_RUNNING_ID = 999_995
+    const val FOCUS_RUNNING_ID = 999_995
     private const val FOCUS_DONE_ID = 999_997
     private const val OLD_ALARM_PREFIX = "alarms_v"
     private val GOLD = 0xFFD4AF37.toInt()
@@ -223,7 +223,9 @@ object Notifier {
     private fun clock(ms: Long) = Fmt.time(java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalTime())
 
     /** Quiet, always-visible notification while focusing: step, time left, and the right buttons for the moment. */
-    fun showFocusRunning(ctx: Context, r: FocusRun) {
+    fun showFocusRunning(ctx: Context, r: FocusRun) = post(ctx, FOCUS_RUNNING_ID, buildFocusRunning(ctx, r))
+
+    fun buildFocusRunning(ctx: Context, r: FocusRun): Notification {
         val now = System.currentTimeMillis()
         val stepLabel = if (r.steps.size > 1) "Step ${r.index + 1}/${r.steps.size} · ${r.step.title}" else r.step.title
         val b = NotificationCompat.Builder(ctx, CH_FOCUS)
@@ -263,7 +265,7 @@ object Notifier {
                     .addAction(0, "Stop", focusAction(ctx, ActionReceiver.ACTION_FOCUS_STOP, 2))
             }
         }
-        post(ctx, FOCUS_RUNNING_ID, b.build())
+        return b.build()
     }
 
     /** A focus moment (time up, break over, step or task done): chime + vibration, with a motivation line. */

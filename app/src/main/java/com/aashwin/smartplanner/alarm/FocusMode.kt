@@ -1,6 +1,5 @@
 package com.aashwin.smartplanner.alarm
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
@@ -9,7 +8,6 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.accessibility.AccessibilityManager
 import com.aashwin.smartplanner.data.Prefs
 
 /** Do Not Disturb during focus, and checks for the app blocker. */
@@ -40,12 +38,8 @@ object FocusMode {
         } catch (_: Exception) { }
     }
 
-    /** Is the Smart Planner accessibility service (the app blocker) switched on? */
-    fun blockerOn(ctx: Context): Boolean {
-        val am = ctx.getSystemService(AccessibilityManager::class.java) ?: return false
-        return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-            .any { it.resolveInfo?.serviceInfo?.packageName == ctx.packageName }
-    }
+    /** Can the app blocker work? (Usage access + Display over other apps granted.) */
+    fun blockerOn(ctx: Context): Boolean = com.aashwin.smartplanner.blocker.BlockerService.ready(ctx)
 }
 
 /** Short built-in sound + vibration for focus moments. Uses the alarm stream so Do Not Disturb doesn't mute it. */

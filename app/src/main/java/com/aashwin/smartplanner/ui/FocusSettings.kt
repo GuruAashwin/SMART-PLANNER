@@ -281,7 +281,8 @@ fun FocusModeScreen(vm: MainViewModel, onBack: () -> Unit) {
     val prefs = vm.prefs
     var tick by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) { tick++; onPauseOrDispose { } }
-    val blockerOn = remember(tick) { FocusMode.blockerOn(ctx) }
+    val usageOk = remember(tick) { com.aashwin.smartplanner.blocker.BlockerService.hasUsageAccess(ctx) }
+    val overlayOk = remember(tick) { Settings.canDrawOverlays(ctx) }
     val dndOk = remember(tick) { FocusMode.dndAllowed(ctx) }
     var blocked by remember { mutableStateOf(prefs.blockedApps) }
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
@@ -302,19 +303,17 @@ fun FocusModeScreen(vm: MainViewModel, onBack: () -> Unit) {
             Column {
                 Hint("While you focus on any task, the apps you pick below are blocked and Do Not Disturb turns on. Breaks are free time.")
                 SectionTitle("Set up the app blocker (once)")
-                if (Build.VERSION.SDK_INT >= 33) {
-                    SetupRow(
-                        "1. Allow restricted settings",
-                        "Android 13+ asks this for apps installed outside the Play Store. In App info, tap ⋮ (top right) → Allow restricted settings.",
-                        blockerOn, "App info",
-                    ) { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName))) }
-                }
                 SetupRow(
-                    (if (Build.VERSION.SDK_INT >= 33) "2. " else "") + "Turn on the focus blocker",
-                    "Accessibility → Smart Planner focus blocker → On. It only sees which app opened, never your screen.",
-                    blockerOn, "Open",
-                ) { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                if (blockerOn) Hint("Blocker is on. Some phones (Xiaomi, Realme) may switch it off; the Focus screen warns you if that happens.")
+                    "1. Usage access",
+                    "Lets the app see which app you open during focus. Find Smart Planner and allow it.",
+                    usageOk, "Open",
+                ) { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                SetupRow(
+                    "2. Display over other apps",
+                    "Lets it show the Back to work screen on top of a blocked app.",
+                    overlayOk, "Open",
+                ) { open(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + ctx.packageName))) }
+                if (usageOk && overlayOk) Hint("Blocker is ready. It only runs during focus sessions and never reads your screen.")
 
                 SectionTitle("Do Not Disturb")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

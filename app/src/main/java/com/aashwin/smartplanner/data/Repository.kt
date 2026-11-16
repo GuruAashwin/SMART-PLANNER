@@ -3,6 +3,7 @@ package com.aashwin.smartplanner.data
 import android.content.Context
 import androidx.room.withTransaction
 import com.aashwin.smartplanner.alarm.FocusMode
+import com.aashwin.smartplanner.blocker.BlockerService
 import com.aashwin.smartplanner.alarm.Notifier
 import com.aashwin.smartplanner.alarm.Scheduler
 import com.aashwin.smartplanner.util.Quotes
@@ -359,7 +360,7 @@ class Repository(
     private fun applyRun(r: FocusRun?) {
         prefs.setFocus(r)
         Scheduler.cancelFocus(ctx)
-        if (r == null) { Notifier.cancelFocusRunning(ctx); return }
+        if (r == null) { BlockerService.stop(ctx); Notifier.cancelFocusRunning(ctx); return }
         FocusMachine.nextAlarm(r)?.let { Scheduler.scheduleFocus(ctx, it) }
         Notifier.showFocusRunning(ctx, r)
     }
@@ -395,6 +396,7 @@ class Repository(
         }
         applyRun(FocusMachine.start(full?.task?.id, full?.task?.title ?: "Focus", steps, now))
         FocusMode.enter(ctx, prefs)
+        BlockerService.start(ctx, prefs)
         Notifier.focusAlert(ctx, "Focus: ${steps.first().title}", "${steps.first().minutes} min · blocked apps are off-limits", Quotes.next(prefs, Quotes.START), false, chime = false)
     }
 
@@ -456,6 +458,7 @@ class Repository(
         val r = prefs.focus.value ?: return
         if (r.phaseEnd in 1..System.currentTimeMillis()) focusTimerEnded()
         else lock.withLock { applyRun(r) }
+        if (prefs.focus.value != null) BlockerService.start(ctx, prefs)
     }
 
     // ---------------- backup ----------------

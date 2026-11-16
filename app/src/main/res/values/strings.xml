@@ -2,6 +2,4 @@
     <string name="app_name">Smart Planner</string>
     <string name="widget_name">Today</string>
     <string name="widget_description">Today\'s tasks. Tap the circle to complete, + to add.</string>
-    <string name="blocker_name">Smart Planner focus blocker</string>
-    <string name="blocker_description">During a focus session, opening an app you chose to block shows a Back to work screen instead. It only checks which app opened; it never reads what is on your screen. It does nothing outside focus sessions.</string>
 </resources>

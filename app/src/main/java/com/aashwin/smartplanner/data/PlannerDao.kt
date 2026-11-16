@@ -48,6 +48,9 @@ interface PlannerDao {
     @Update
     suspend fun updateSubtask(subtask: SubtaskEntity)
 
+    @Query("UPDATE subtasks SET done = :done, focusedMinutes = focusedMinutes + :addMinutes WHERE id = :id")
+    suspend fun finishStep(id: Long, done: Boolean, addMinutes: Int)
+
     @Query("UPDATE subtasks SET done = 1 WHERE taskId = :taskId")
     suspend fun completeAllSubtasks(taskId: Long)
 

@@ -96,7 +96,7 @@ private fun PermissionRow(title: String, why: String, ok: Boolean, onFix: () -> 
 }
 
 @Composable
-fun SettingsScreen(vm: MainViewModel) {
+fun SettingsScreen(vm: MainViewModel, onSounds: () -> Unit = {}, onFocusMode: () -> Unit = {}) {
     val ctx = LocalContext.current
     val prefs = vm.prefs
     val scope = rememberCoroutineScope()
@@ -109,20 +109,12 @@ fun SettingsScreen(vm: MainViewModel) {
     var summaryOn by remember { mutableStateOf(prefs.summaryEnabled) }
     var summaryAt by remember { mutableIntStateOf(prefs.summaryMinutes) }
     var pickSummary by remember { mutableStateOf(false) }
-    var toneName by remember { mutableStateOf(toneTitle(ctx, prefs.alarmToneUri)) }
     var addCat by remember { mutableStateOf(false) }
     var deleteCat by remember { mutableStateOf<Long?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) { tick++; onPauseOrDispose { } }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
-    val toneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        val uri = res.data?.let { IntentCompat.getParcelableExtra(it, RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java) }
-        if (uri != null) {
-            prefs.alarmToneUri = uri.toString()
-            toneName = toneTitle(ctx, uri.toString())
-        }
-    }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -188,7 +180,7 @@ fun SettingsScreen(vm: MainViewModel) {
         }
 
         SectionTitle("Reminders & alarms")
-        PickerRow("Default reminder", defaultReminder, listOf(-1, 0, 5, 10, 15, 30, 60),
+        PickerRow("Default reminder (before start)", defaultReminder, listOf(-1, 0, 5, 10, 15, 30, 60),
             { if (it < 0) "None" else Fmt.offset(it) }) { defaultReminder = it; prefs.defaultReminder = it }
         PickerRow("Snooze length", defaultSnooze, listOf(5, 10, 15, 30, 60),
             { if (it == 60) "1 hour" else "$it min" }) { defaultSnooze = it; prefs.defaultSnooze = it }
@@ -211,16 +203,24 @@ fun SettingsScreen(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Alarm sound", Modifier.weight(1f))
-            OutlinedButton(onClick = {
-                toneLauncher.launch(
-                    Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, prefs.alarmToneUri?.let { Uri.parse(it) })
+            Column(Modifier.weight(1f)) {
+                Text("Start alert sound")
+                Text(
+                    prefs.startSoundName ?: "Phone's default alarm",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }) { Text(toneName) }
+            }
+            OutlinedButton(onClick = onSounds) { Text("Choose") }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Focus mode")
+                Text(
+                    "Block apps, Do Not Disturb, motivation lines",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = onFocusMode) { Text("Set up") }
         }
 
         SectionTitle("Make alarms reliable")
@@ -288,7 +288,7 @@ fun SettingsScreen(vm: MainViewModel) {
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text(
-            "Smart Planner 1.2.1 · All data stays on this phone. No account, no internet needed.",
+            "Smart Planner 2.0 · All data stays on this phone. No account, no internet needed.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(96.dp))
@@ -302,11 +302,4 @@ fun SettingsScreen(vm: MainViewModel) {
         val c = categories.firstOrNull { it.id == id }
         if (c != null) ConfirmDelete(c.name + " (its tasks are kept)", { vm.deleteCategory(id) }, { deleteCat = null })
     }
-}
-
-private fun toneTitle(ctx: android.content.Context, uri: String?): String {
-    if (uri == null) return "Default alarm"
-    return try {
-        RingtoneManager.getRingtone(ctx, Uri.parse(uri))?.getTitle(ctx) ?: "Custom"
-    } catch (_: Exception) { "Custom" }
 }

@@ -37,10 +37,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val focusSessions: StateFlow<List<FocusSessionEntity>> =
         repo.focusSessions.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    fun startFocus(taskId: Long?, title: String, minutes: Int, isBreak: Boolean) =
-        repo.startFocus(taskId, title, minutes, isBreak)
+    fun startFocus(taskId: Long?, minutes: Int?) = viewModelScope.launch { repo.startFocus(taskId, minutes) }
     fun stopFocus() = viewModelScope.launch { repo.stopFocus() }
-    fun finishFocus() = viewModelScope.launch { repo.finishFocus() }
+    fun focusPause() = viewModelScope.launch { repo.focusPause() }
+    fun focusResume() = viewModelScope.launch { repo.focusResume() }
+    fun focusStepDone() = viewModelScope.launch { repo.focusStepDone() }
+    fun focusExtend(minutes: Int) = viewModelScope.launch { repo.focusExtend(minutes) }
+    fun focusSkipBreak() = viewModelScope.launch { repo.focusSkipBreak() }
+    fun focusTick() = viewModelScope.launch { repo.focusTimerEnded() }
 
     private val _messages = MutableSharedFlow<UiMessage>(extraBufferCapacity = 4)
     val messages: SharedFlow<UiMessage> = _messages

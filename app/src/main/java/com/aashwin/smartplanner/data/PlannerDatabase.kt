@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TaskEntity::class, SubtaskEntity::class, ReminderEntity::class,
         CategoryEntity::class, HabitEntity::class, HabitLogEntity::class, FocusSessionEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class PlannerDatabase : RoomDatabase() {
@@ -37,9 +37,22 @@ abstract class PlannerDatabase : RoomDatabase() {
             }
         }
 
+        /** v4: start vs deadline, planned minutes, step minutes, focus per step. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN deadlineDate INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN deadlineMinutes INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN plannedMinutes INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN startAlert INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE subtasks ADD COLUMN minutes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subtasks ADD COLUMN focusedMinutes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN subtaskId INTEGER")
+            }
+        }
+
         fun create(context: Context): PlannerDatabase =
             Room.databaseBuilder(context, PlannerDatabase::class.java, "planner.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

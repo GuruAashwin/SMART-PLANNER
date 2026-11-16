@@ -14,6 +14,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.aashwin.smartplanner.MainActivity
 import com.aashwin.smartplanner.R
+import com.aashwin.smartplanner.data.FocusMachine
+import com.aashwin.smartplanner.data.FocusRun
 import com.aashwin.smartplanner.data.HabitEntity
 import com.aashwin.smartplanner.data.Prefs
 import com.aashwin.smartplanner.data.TaskEntity
@@ -25,6 +27,7 @@ object Notifier {
     const val CH_ALARMS = "alarms_live"
     const val CH_DAILY = "daily"
     const val CH_FOCUS = "focus"
+    const val CH_FOCUS_ALERT = "focus_alerts"
     private const val FOCUS_RUNNING_ID = 999_995
     private const val FOCUS_DONE_ID = 999_997
     private const val OLD_ALARM_PREFIX = "alarms_v"
@@ -43,12 +46,19 @@ object Notifier {
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_ALARMS, "Alarms", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Full-screen alarms. The sound is played by the app, so this channel is silent."
+            NotificationChannel(CH_ALARMS, "Start alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Time to start alerts. The sound is played by the app, so this channel is silent."
                 setSound(null, null)
                 enableVibration(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setBypassDnd(true)
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_FOCUS_ALERT, "Focus moments", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Time's up, break over, step done. The app plays a short chime itself."
+                setSound(null, null)
+                enableVibration(false)
             }
         )
         nm.createNotificationChannel(
@@ -104,8 +114,30 @@ object Notifier {
         return if (t != null) "Due ${Fmt.time(t)}" else "Due today"
     }
 
-    fun showReminder(ctx: Context, task: TaskEntity, prefs: Prefs, text: String = dueText(task)) {
-        val snooze = prefs.defaultSnooze
+    // ---------------- reminders and start alerts ----------------
+
+    /** Opens the app and starts focus on the task. */
+    private fun startFocusIntent(ctx: Context, taskId: Long): PendingIntent = PendingIntent.getActivity(
+        ctx, (taskId * 8 + 7).toInt(),
+        Intent(ctx, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_START_FOCUS, taskId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    private fun later(ctx: Context, taskId: Long, prefs: Prefs, startAlert: Boolean, slot: Int): PendingIntent =
+        PendingIntent.getBroadcast(
+            ctx, (taskId * 8 + slot).toInt(),
+            Intent(ctx, ActionReceiver::class.java)
+                .setAction(ActionReceiver.ACTION_SNOOZE)
+                .putExtra(Scheduler.EXTRA_TASK, taskId)
+                .putExtra(ActionReceiver.EXTRA_MINUTES, prefs.defaultSnooze)
+                .putExtra(ActionReceiver.EXTRA_START_ALERT, startAlert),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+    /** Reminder before the start or the deadline: Start focus, or Later. */
+    fun showReminder(ctx: Context, task: TaskEntity, prefs: Prefs, text: String = reminderText(task)) {
         val n = NotificationCompat.Builder(ctx, CH_REMINDERS)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(GOLD)
@@ -115,59 +147,146 @@ object Notifier {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setContentIntent(openApp(ctx, task.id))
-            .addAction(0, "Complete", action(ctx, ActionReceiver.ACTION_COMPLETE, task.id, slot = 0))
-            .addAction(0, "Snooze $snooze min", action(ctx, ActionReceiver.ACTION_SNOOZE, task.id, snooze, slot = 1))
+            .addAction(0, "Start", startFocusIntent(ctx, task.id))
+            .addAction(0, "Later (${prefs.defaultSnooze} min)", later(ctx, task.id, prefs, startAlert = false, slot = 1))
             .build()
         post(ctx, reminderNotificationId(task.id), n)
     }
 
-    fun showMissedAlarm(ctx: Context, task: TaskEntity, prefs: Prefs) =
-        showReminder(ctx, task, prefs, "Missed alarm · " + dueText(task))
+    private fun reminderText(task: TaskEntity): String {
+        val start = task.time?.let { "Starts ${Fmt.time(it)}" }
+        val due = if (task.deadlineDate != null) "Due " + Fmt.due(task.deadline, task.deadlineMinutes) else null
+        return listOfNotNull(start, due).joinToString(" · ").ifEmpty { "Today" }
+    }
 
-    /** The ringing alarm's notification; posted by [AlarmService] as its foreground notification. */
-    fun buildAlarm(ctx: Context, task: TaskEntity, prefs: Prefs): Notification {
-        val fullScreen = PendingIntent.getActivity(
+    /** Start alert nobody answered: stays in the shade so the task isn't forgotten. */
+    fun showMissedStart(ctx: Context, task: TaskEntity, prefs: Prefs) =
+        showReminder(ctx, task, prefs, "Missed start · " + reminderText(task))
+
+    /**
+     * "Time to start" alert. Posted by [AlarmService] as its foreground notification while the sound plays.
+     * Full screen over the lock screen for High priority, a heads-up notification otherwise.
+     */
+    fun buildStartAlert(ctx: Context, task: TaskEntity, subtitle: String, quote: String?, fullScreen: Boolean, prefs: Prefs): Notification {
+        val screen = PendingIntent.getActivity(
             ctx, (task.id * 8 + 6).toInt(),
             Intent(ctx, AlarmActivity::class.java)
                 .putExtra(Scheduler.EXTRA_TASK, task.id)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val snooze = prefs.defaultSnooze
-        return NotificationCompat.Builder(ctx, CH_ALARMS)
+        val b = NotificationCompat.Builder(ctx, CH_ALARMS)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(GOLD)
-            .setContentTitle(task.title)
-            .setContentText(dueText(task))
+            .setContentTitle("Time to start: ${task.title}")
+            .setContentText(subtitle)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(subtitle + (quote?.let { "\n\n$it" } ?: "")))
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setCategory(if (fullScreen) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setFullScreenIntent(fullScreen, true)
-            .setContentIntent(fullScreen)
-            .addAction(0, "Snooze $snooze min", action(ctx, ActionReceiver.ACTION_SNOOZE, task.id, snooze, slot = 2))
-            .addAction(0, "Complete", action(ctx, ActionReceiver.ACTION_COMPLETE, task.id, slot = 3))
-            .addAction(0, "Dismiss", action(ctx, ActionReceiver.ACTION_DISMISS, task.id, slot = 4))
-            .build()
+            .setContentIntent(screen)
+            .addAction(0, "Start", startFocusIntent(ctx, task.id))
+            .addAction(0, "Later (${prefs.defaultSnooze} min)", later(ctx, task.id, prefs, startAlert = true, slot = 2))
+            .addAction(0, "Skip", action(ctx, ActionReceiver.ACTION_SKIP, task.id, slot = 4))
+        if (fullScreen) b.setFullScreenIntent(screen, true)
+        return b.build()
     }
 
-    /** Used only if the phone refuses to start the alarm sound service: a loud, repeating notification instead. */
-    fun showAlarmFallback(ctx: Context, task: TaskEntity, prefs: Prefs) {
+    /** Used only if the phone refuses to start the sound service: a loud, repeating notification instead. */
+    fun showStartFallback(ctx: Context, task: TaskEntity, prefs: Prefs) {
         val n = NotificationCompat.Builder(ctx, CH_REMINDERS)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(GOLD)
-            .setContentTitle(task.title)
-            .setContentText("Alarm · " + dueText(task))
+            .setContentTitle("Time to start: ${task.title}")
+            .setContentText(reminderText(task))
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setContentIntent(openApp(ctx, task.id))
-            .addAction(0, "Complete", action(ctx, ActionReceiver.ACTION_COMPLETE, task.id, slot = 3))
-            .addAction(0, "Snooze ${prefs.defaultSnooze} min", action(ctx, ActionReceiver.ACTION_SNOOZE, task.id, prefs.defaultSnooze, slot = 2))
+            .addAction(0, "Start", startFocusIntent(ctx, task.id))
+            .addAction(0, "Later (${prefs.defaultSnooze} min)", later(ctx, task.id, prefs, startAlert = true, slot = 2))
+            .addAction(0, "Skip", action(ctx, ActionReceiver.ACTION_SKIP, task.id, slot = 4))
             .build()
         n.flags = n.flags or Notification.FLAG_INSISTENT
         post(ctx, alarmNotificationId(task.id), n)
     }
+
+    // ---------------- focus session ----------------
+
+    private fun focusAction(ctx: Context, action: String, code: Int, minutes: Int = 0): PendingIntent =
+        PendingIntent.getBroadcast(
+            ctx, 20 + code,
+            Intent(ctx, ActionReceiver::class.java).setAction(action).putExtra(ActionReceiver.EXTRA_MINUTES, minutes),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+    private fun clock(ms: Long) = Fmt.time(java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalTime())
+
+    /** Quiet, always-visible notification while focusing: step, time left, and the right buttons for the moment. */
+    fun showFocusRunning(ctx: Context, r: FocusRun) {
+        val now = System.currentTimeMillis()
+        val stepLabel = if (r.steps.size > 1) "Step ${r.index + 1}/${r.steps.size} · ${r.step.title}" else r.step.title
+        val b = NotificationCompat.Builder(ctx, CH_FOCUS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(GOLD)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(openFocus(ctx))
+        when {
+            r.phase == FocusMachine.BREAK -> {
+                b.setContentTitle("Break · next: ${r.next?.title ?: r.step.title}")
+                    .setContentText("Back at ${clock(r.phaseEnd)}")
+                    .setUsesChronometer(true).setChronometerCountDown(true).setWhen(r.phaseEnd).setShowWhen(true)
+                    .addAction(0, "Skip break", focusAction(ctx, ActionReceiver.ACTION_FOCUS_SKIP_BREAK, 1))
+                    .addAction(0, "Stop", focusAction(ctx, ActionReceiver.ACTION_FOCUS_STOP, 2))
+            }
+            r.phase == FocusMachine.TIME_UP -> {
+                b.setContentTitle("Time's up · $stepLabel")
+                    .setContentText("Done, or need more time?")
+                    .addAction(0, "Done", focusAction(ctx, ActionReceiver.ACTION_FOCUS_DONE, 3))
+                    .addAction(0, "+5 min", focusAction(ctx, ActionReceiver.ACTION_FOCUS_EXTEND, 4, 5))
+                    .addAction(0, "+10 min", focusAction(ctx, ActionReceiver.ACTION_FOCUS_EXTEND, 5, 10))
+            }
+            r.isPaused -> {
+                b.setContentTitle("Paused · $stepLabel")
+                    .setContentText("${(r.msLeft(now) + 59_999) / 60_000} min left")
+                    .addAction(0, "Resume", focusAction(ctx, ActionReceiver.ACTION_FOCUS_RESUME, 6))
+                    .addAction(0, "Stop", focusAction(ctx, ActionReceiver.ACTION_FOCUS_STOP, 2))
+            }
+            else -> {
+                b.setContentTitle(stepLabel)
+                    .setContentText("Focus · ends ${clock(r.phaseEnd)}")
+                    .setUsesChronometer(true).setChronometerCountDown(true).setWhen(r.phaseEnd).setShowWhen(true)
+                    .addAction(0, "Pause", focusAction(ctx, ActionReceiver.ACTION_FOCUS_PAUSE, 7))
+                    .addAction(0, "Step done", focusAction(ctx, ActionReceiver.ACTION_FOCUS_DONE, 3))
+                    .addAction(0, "Stop", focusAction(ctx, ActionReceiver.ACTION_FOCUS_STOP, 2))
+            }
+        }
+        post(ctx, FOCUS_RUNNING_ID, b.build())
+    }
+
+    /** A focus moment (time up, break over, step or task done): chime + vibration, with a motivation line. */
+    fun focusAlert(ctx: Context, title: String, text: String, quote: String?, timeUpActions: Boolean, chime: Boolean = true) {
+        val b = NotificationCompat.Builder(ctx, CH_FOCUS_ALERT)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(GOLD)
+            .setContentTitle(title)
+            .setContentText(quote ?: text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text + (quote?.let { "\n\n$it" } ?: "")))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openFocus(ctx))
+        if (timeUpActions) {
+            b.addAction(0, "Done", focusAction(ctx, ActionReceiver.ACTION_FOCUS_DONE, 3))
+                .addAction(0, "+5 min", focusAction(ctx, ActionReceiver.ACTION_FOCUS_EXTEND, 4, 5))
+                .addAction(0, "+10 min", focusAction(ctx, ActionReceiver.ACTION_FOCUS_EXTEND, 5, 10))
+        }
+        post(ctx, FOCUS_DONE_ID, b.build())
+        if (chime) Chime.play(ctx)
+    }
+
+    fun cancelFocusAlert(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(FOCUS_DONE_ID)
 
     fun showSummary(ctx: Context, today: List<TaskEntity>, overdue: Int) {
         val title = when {
@@ -216,42 +335,6 @@ object Notifier {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
-
-    /** Quiet ongoing notification with a live countdown while a focus session runs. */
-    fun showFocusRunning(ctx: Context, title: String, endAt: Long, isBreak: Boolean) {
-        val stop = PendingIntent.getBroadcast(
-            ctx, 10, Intent(ctx, ActionReceiver::class.java).setAction(ActionReceiver.ACTION_FOCUS_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val n = NotificationCompat.Builder(ctx, CH_FOCUS)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(GOLD)
-            .setContentTitle(if (isBreak) "Break" else "Focus" + if (title.isNotBlank()) " · $title" else "")
-            .setContentText("Ends at " + Fmt.time(java.time.Instant.ofEpochMilli(endAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime()))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setUsesChronometer(true)
-            .setChronometerCountDown(true)
-            .setWhen(endAt)
-            .setShowWhen(true)
-            .setContentIntent(openFocus(ctx))
-            .addAction(0, "Stop", stop)
-            .build()
-        post(ctx, FOCUS_RUNNING_ID, n)
-    }
-
-    fun showFocusDone(ctx: Context, title: String, minutes: Int, isBreak: Boolean) {
-        val n = NotificationCompat.Builder(ctx, CH_REMINDERS)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(GOLD)
-            .setContentTitle(if (isBreak) "Break over" else "Focus done · $minutes min")
-            .setContentText(if (isBreak) "Ready for the next session?" else (if (title.isNotBlank()) "$title · " else "") + "Take a short break.")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(openFocus(ctx))
-            .build()
-        post(ctx, FOCUS_DONE_ID, n)
-    }
 
     fun cancelFocusRunning(ctx: Context) = NotificationManagerCompat.from(ctx).cancel(FOCUS_RUNNING_ID)
 

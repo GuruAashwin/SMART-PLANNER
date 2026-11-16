@@ -27,6 +27,7 @@ object Scheduler {
     const val KIND_SUMMARY = 4
     const val KIND_HABIT = 5
     const val KIND_FOCUS = 6
+    const val KIND_REMIND_SNOOZE = 7
 
     const val EXTRA_KIND = "kind"
     const val EXTRA_TASK = "taskId"
@@ -96,22 +97,31 @@ object Scheduler {
         return millis(at)
     }
 
+    /** Reminders count back from the "Due by" time when there is one, otherwise from the start time. */
+    fun reminderBase(task: TaskEntity): Long? = when {
+        task.deadlineDate != null && task.deadlineMinutes != null -> task.deadlineMillis()
+        task.dueMinutes != null -> task.dueMillis()
+        else -> null
+    }
+
     /** Schedule every future alert of a pending task. Past alerts are skipped (no duplicates after reboot). */
     fun schedule(ctx: Context, task: TaskEntity, reminders: List<ReminderEntity>) {
         if (task.status != Status.PENDING) return
         val now = System.currentTimeMillis()
-        val due = task.dueMillis()
-        if (due != null && task.dueMinutes != null) {
-            for (r in reminders) {
-                val at = due - r.offsetMinutes * 60_000L
-                if (at > now) setExact(ctx, at, pending(ctx, KIND_REMINDER, r.id, task.id, r.id))
-            }
-            if (task.alarmEnabled && due > now) setAlarmClock(ctx, due, pending(ctx, KIND_ALARM, task.id, task.id))
+        val base = reminderBase(task)
+        if (base != null) for (r in reminders) {
+            val at = base - r.offsetMinutes * 60_000L
+            if (at > now) setExact(ctx, at, pending(ctx, KIND_REMINDER, r.id, task.id, r.id))
+        }
+        // "Time to start" at the start time (KIND_ALARM). setAlarmClock = the most reliable kind.
+        val start = task.dueMillis()
+        if (task.startAlert && task.dueMinutes != null && start != null && start > now) {
+            setAlarmClock(ctx, start, pending(ctx, KIND_ALARM, task.id, task.id))
         }
         val snooze = task.snoozedUntil
         if (snooze != null && snooze > now) {
             val pi = pending(ctx, KIND_SNOOZE, task.id, task.id)
-            if (task.alarmEnabled) setAlarmClock(ctx, snooze, pi) else setExact(ctx, snooze, pi)
+            setAlarmClock(ctx, snooze, pi)
         }
     }
 
@@ -119,7 +129,12 @@ object Scheduler {
         reminders.forEach { cancelPending(ctx, KIND_REMINDER, it.id, task.id) }
         cancelPending(ctx, KIND_ALARM, task.id, task.id)
         cancelPending(ctx, KIND_SNOOZE, task.id, task.id)
+        cancelPending(ctx, KIND_REMIND_SNOOZE, task.id, task.id)
     }
+
+    /** Snoozed reminder notification (not saved; a restart drops it, the task itself stays). */
+    fun scheduleReminderSnooze(ctx: Context, taskId: Long, at: Long) =
+        setExact(ctx, at, pending(ctx, KIND_REMIND_SNOOZE, taskId, taskId))
 
     /** Daily roll-over of recurring tasks at the start of the user's day. */
     fun scheduleRollover(ctx: Context, startHour: Int) =

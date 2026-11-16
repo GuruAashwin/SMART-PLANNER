@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -136,7 +138,13 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
     var minutes by remember { mutableStateOf(draft?.minutes) }
     var priority by remember { mutableStateOf(Priority.MEDIUM) }
     var categoryId by remember { mutableStateOf<Long?>(null) }
-    var alarm by remember { mutableStateOf(false) }
+    var startAlert by remember { mutableStateOf(true) }
+    var deadlineDate by remember { mutableStateOf<LocalDate?>(null) }
+    var deadlineMinutes by remember { mutableStateOf<Int?>(null) }
+    var planned by remember { mutableStateOf<Int?>(null) }
+    var showDeadlineDate by remember { mutableStateOf(false) }
+    var showDeadlineTime by remember { mutableStateOf(false) }
+    var stepMenu by remember { mutableStateOf(-1) }
     var recType by remember { mutableStateOf(Recurrence.NONE) }
     var recInterval by remember { mutableStateOf("2") }
     var recDays by remember { mutableStateOf(0) }
@@ -167,7 +175,8 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         val t = full.task
         original = t
         title = t.title; description = t.description; date = t.date; minutes = t.dueMinutes
-        priority = t.priority; categoryId = t.categoryId; alarm = t.alarmEnabled
+        priority = t.priority; categoryId = t.categoryId; startAlert = t.startAlert
+        deadlineDate = t.deadline; deadlineMinutes = t.deadlineMinutes; planned = t.plannedMinutes
         recType = t.recType; recInterval = t.recInterval.toString(); recDays = t.recDays
         reminders.clear(); reminders.addAll(full.reminders.map { it.offsetMinutes }.sorted())
         subtasks.clear(); subtasks.addAll(full.sortedSubtasks)
@@ -176,8 +185,9 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
 
     /** Fingerprint of everything editable, to notice unsaved changes. */
     fun currentState(): String = listOf(
-        title, description, date, minutes, priority, categoryId, alarm, recType, recInterval, recDays,
-        reminders.sorted(), subtasks.map { it.title to it.done }, newSub,
+        title, description, date, minutes, priority, categoryId, startAlert, recType, recInterval, recDays,
+        deadlineDate, deadlineMinutes, planned,
+        reminders.sorted(), subtasks.map { Triple(it.title, it.done, it.minutes) }, newSub,
     ).toString()
     LaunchedEffect(loaded, original) { if (loaded && initialState != "new" && original != null) initialState = currentState() }
     fun isDirty(): Boolean = when (initialState) {
@@ -192,7 +202,14 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         val hadNoTime = minutes == null
         minutes = m
         if (m != null && hadNoTime && reminders.isEmpty() && vm.prefs.defaultReminder >= 0) reminders.add(vm.prefs.defaultReminder)
-        if (m == null) { reminders.clear(); alarm = false }
+        if (m == null && (deadlineDate == null || deadlineMinutes == null)) reminders.clear()
+    }
+
+    /** Reminders count back from the "Due by" time if it has one, otherwise from the start time. */
+    fun reminderBase(): LocalDateTime? = when {
+        deadlineDate != null && deadlineMinutes != null -> LocalDateTime.of(deadlineDate!!, LocalTime.of(deadlineMinutes!! / 60, deadlineMinutes!! % 60))
+        date != null && minutes != null -> LocalDateTime.of(date!!, LocalTime.of(minutes!! / 60, minutes!! % 60))
+        else -> null
     }
 
     fun save() {
@@ -204,7 +221,9 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
         val task = base.copy(
             title = title.trim(), description = description.trim(), categoryId = categoryId, priority = priority,
             dueDate = d?.toEpochDay(), dueMinutes = if (d == null) null else minutes,
-            alarmEnabled = alarm && d != null && minutes != null, recType = recType,
+            alarmEnabled = false, startAlert = startAlert, recType = recType,
+            deadlineDate = deadlineDate?.toEpochDay(), deadlineMinutes = if (deadlineDate == null) null else deadlineMinutes,
+            plannedMinutes = if (subtasks.isEmpty()) planned else null,
             recInterval = recInterval.toIntOrNull()?.coerceIn(1, 365) ?: 1,
             recDays = if (recType == Recurrence.WEEKDAYS && recDays == 0) (1 shl (d ?: LocalDate.now()).dayOfWeek.value - 1) else recDays,
             snoozedUntil = if (dateChanged) null else base.snoozedUntil,
@@ -214,7 +233,7 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             recAnchor = if (recType == Recurrence.MONTHLY && (dateChanged || base.recType != Recurrence.MONTHLY)) (d?.dayOfMonth ?: 0)
                 else if (recType == Recurrence.MONTHLY) base.recAnchor else 0,
         )
-        vm.save(task, subtasks.toList(), if (task.dueMinutes == null) emptyList() else reminders.toList())
+        vm.save(task, subtasks.toList(), if (reminderBase() == null) emptyList() else reminders.toList())
         onClose()
     }
 
@@ -292,7 +311,7 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                     }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(Fmt.day(date!!) + if (Fmt.day(date!!).let { it == "Today" || it == "Tomorrow" }) " · " + Fmt.longDay(date!!) else "",
+                        Text("Start · " + Fmt.day(date!!) + if (Fmt.day(date!!).let { it == "Today" || it == "Tomorrow" }) " · " + Fmt.longDay(date!!) else "",
                             modifier = Modifier.weight(1f))
                         IconButton(onClick = { date = null; setTime(null) }) { Icon(Icons.Filled.Close, "Remove date") }
                     }
@@ -302,25 +321,56 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             if (date != null) {
                 EditorRow(Icons.Filled.Schedule, onClick = { showTime = true }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (minutes == null) Box(Modifier.weight(1f)) { Muted("Add time") }
-                        else Text(Fmt.time(minutes!!), Modifier.weight(1f))
+                        if (minutes == null) Box(Modifier.weight(1f)) { Muted("Add start time") }
+                        else Text("Starts at " + Fmt.time(minutes!!), Modifier.weight(1f))
                         if (minutes != null) IconButton(onClick = { setTime(null) }) { Icon(Icons.Filled.Close, "Remove time") }
                     }
                 }
             }
             if (date != null && minutes == null) {
                 Text(
-                    "No time set: it will be in your morning summary. Add a time for reminders or an alarm.",
+                    "No start time: it will be in your morning summary. Add a time to get a \"Time to start\" alert.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 42.dp, bottom = 4.dp),
                 )
             }
-            // ---- reminders + alarm (need a time) ----
+            // ---- start alert ----
             if (date != null && minutes != null) {
+                EditorRow(Icons.Filled.Alarm, onClick = { startAlert = !startAlert }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Time to start alert")
+                            Text(
+                                if (priority == Priority.HIGH) "Full screen at ${Fmt.time(minutes!!)} with your sound (High priority)"
+                                else "At ${Fmt.time(minutes!!)} with your sound · Start, Later or Skip",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = startAlert, onCheckedChange = { startAlert = it })
+                    }
+                }
+            }
+            // ---- due by (optional deadline) ----
+            if (date != null) {
+                EditorRow(Icons.Filled.Event, onClick = if (deadlineDate != null) { { showDeadlineDate = true } } else null) {
+                    if (deadlineDate == null) {
+                        AssistChip(onClick = { deadlineDate = date; showDeadlineTime = true }, label = { Text("Add \"Due by\" (deadline)") })
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Due by " + Fmt.day(deadlineDate!!), Modifier.weight(1f))
+                            AssistChip(onClick = { showDeadlineTime = true }, label = { Text(deadlineMinutes?.let { Fmt.time(it) } ?: "End of day") })
+                            IconButton(onClick = { deadlineDate = null; deadlineMinutes = null }) { Icon(Icons.Filled.Close, "Remove deadline") }
+                        }
+                    }
+                }
+            }
+            // ---- reminders (before the deadline, or before the start) ----
+            val remBase = reminderBase()
+            if (remBase != null) {
                 EditorRow(Icons.Filled.Notifications) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         reminders.sorted().forEach { off ->
-                            val at = LocalTime.of(minutes!! / 60, minutes!! % 60).minusMinutes(off.toLong())
+                            val at = remBase.toLocalTime().minusMinutes(off.toLong())
                             InputChip(
                                 selected = false, onClick = { reminders.remove(off) },
                                 label = { Text(if (off == 0) "At ${Fmt.time(at)}" else Fmt.time(at)) },
@@ -330,7 +380,12 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                         Box {
                             AssistChip(
                                 onClick = { reminderMenu = true },
-                                label = { Text(if (reminders.isEmpty()) "Add reminder" else "Add") },
+                                label = {
+                                    Text(
+                                        if (reminders.isNotEmpty()) "Add"
+                                        else if (deadlineDate != null && deadlineMinutes != null) "Remind before deadline" else "Remind before start"
+                                    )
+                                },
                                 leadingIcon = { Icon(Icons.Filled.Add, null, Modifier.size(18.dp)) },
                             )
                             DropdownMenu(expanded = reminderMenu, onDismissRequest = { reminderMenu = false }) {
@@ -342,16 +397,14 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                         }
                     }
                 }
-                EditorRow(Icons.Filled.Alarm, onClick = { alarm = !alarm }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Alarm")
-                            Text(
-                                "Rings full screen at ${Fmt.time(minutes!!)}",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+            }
+            // ---- planned focus length (tasks without steps) ----
+            if (subtasks.isEmpty()) {
+                EditorRow(Icons.Filled.Timer) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(15, 25, 45, 60, 90).forEach { m ->
+                            FilterChip(selected = planned == m, onClick = { planned = if (planned == m) null else m }, label = { Text("$m min") })
                         }
-                        Switch(checked = alarm, onCheckedChange = { alarm = it })
                     }
                 }
             }
@@ -409,7 +462,14 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             }
 
             // ---- checklist ----
-            SectionTitle("Checklist" + if (subtasks.isNotEmpty()) " · ${subtasks.count { it.done }}/${subtasks.size}" else "")
+            SectionTitle(
+                "Steps" + if (subtasks.isNotEmpty())
+                    " · ${subtasks.count { it.done }}/${subtasks.size} · ${subtasks.sumOf { if (it.minutes > 0) it.minutes else 25 }} min" else ""
+            )
+            if (subtasks.isEmpty()) Text(
+                "Split the work into steps; each gets its own focus timer, with a 5-minute break between steps.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             subtasks.forEachIndexed { i, s ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { subtasks[i] = s.copy(done = !s.done) }) {
@@ -420,19 +480,27 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
                         s.title, Modifier.weight(1f),
                         color = if (s.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                     )
+                    Box {
+                        TextButton(onClick = { stepMenu = i }) { Text("${if (s.minutes > 0) s.minutes else 25} min") }
+                        DropdownMenu(expanded = stepMenu == i, onDismissRequest = { stepMenu = -1 }) {
+                            listOf(5, 10, 15, 20, 25, 30, 45, 60, 90).forEach { m ->
+                                DropdownMenuItem(text = { Text("$m min") }, onClick = { subtasks[i] = s.copy(minutes = m); stepMenu = -1 })
+                            }
+                        }
+                    }
                     IconButton(onClick = { subtasks.removeAt(i) }) {
                         Icon(Icons.Filled.Close, "Remove item", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
             fun addSub() {
-                if (newSub.isNotBlank()) { subtasks.add(SubtaskEntity(taskId = 0, title = newSub.trim())); newSub = "" }
+                if (newSub.isNotBlank()) { subtasks.add(SubtaskEntity(taskId = 0, title = newSub.trim(), minutes = 25)); newSub = "" }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { addSub() }) { Icon(Icons.Filled.Add, "Add item", tint = MaterialTheme.colorScheme.primary) }
                 TextField(
                     value = newSub, onValueChange = { newSub = it },
-                    placeholder = { Text("Add item") }, singleLine = true,
+                    placeholder = { Text("Add step") }, singleLine = true,
                     modifier = Modifier.weight(1f), colors = plainField,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, capitalization = KeyboardCapitalization.Sentences),
                     keyboardActions = KeyboardActions(onDone = { addSub() }),
@@ -463,14 +531,35 @@ fun EditorScreen(vm: MainViewModel, taskId: Long, draft: Draft?, onClose: () -> 
             setTime(m); showTime = false
         }
     }
-    if (showReminderTime && minutes != null && date != null) {
-        TimeDialog(initial = (minutes!! - 60).coerceAtLeast(0), title = "Remind me at", onDismiss = { showReminderTime = false }) { m ->
-            val due = LocalDateTime.of(date!!, LocalTime.of(minutes!! / 60, minutes!! % 60))
-            var at = LocalDateTime.of(date!!, LocalTime.of(m / 60, m % 60))
+    val pickBase = reminderBase()
+    if (showReminderTime && pickBase != null) {
+        TimeDialog(initial = (pickBase.hour * 60 + pickBase.minute - 60).coerceAtLeast(0), title = "Remind me at", onDismiss = { showReminderTime = false }) { m ->
+            val due = pickBase
+            var at = LocalDateTime.of(pickBase.toLocalDate(), LocalTime.of(m / 60, m % 60))
             if (at.isAfter(due)) at = at.minusDays(1) // e.g. 11 PM the night before
             val off = ChronoUnit.MINUTES.between(at, due).toInt()
             if (off >= 0 && off !in reminders) reminders.add(off)
             showReminderTime = false
+        }
+    }
+    if (showDeadlineDate) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = (deadlineDate ?: date ?: LocalDate.now()).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDeadlineDate = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { deadlineDate = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }
+                    showDeadlineDate = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDeadlineDate = false }) { Text("Cancel") } },
+        ) { DatePicker(state) }
+    }
+    if (showDeadlineTime) {
+        TimeDialog(initial = deadlineMinutes ?: 20 * 60, title = "Due by", onDismiss = { showDeadlineTime = false }) { m ->
+            deadlineMinutes = m; showDeadlineTime = false
         }
     }
     if (newCatDialog) {

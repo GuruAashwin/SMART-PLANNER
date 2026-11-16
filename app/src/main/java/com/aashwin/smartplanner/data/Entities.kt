@@ -66,22 +66,43 @@ data class TaskEntity(
     @ColumnInfo(defaultValue = "0") val recAnchor: Int = 0,
     val snoozedUntil: Long? = null,
     val postponeCount: Int = 0,
+    /** Optional "Due by" (the start is [dueDate]/[dueMinutes]). */
+    val deadlineDate: Long? = null,
+    val deadlineMinutes: Int? = null,
+    /** Planned focus length for a task without steps. */
+    val plannedMinutes: Int? = null,
+    /** Alert at the start time ("Time to start"). */
+    @ColumnInfo(defaultValue = "1") val startAlert: Boolean = true,
 ) {
+    /** [dueDate]/[dueMinutes] hold the START: when to begin working. */
     val date: LocalDate? get() = dueDate?.let { LocalDate.ofEpochDay(it) }
     val time: LocalTime? get() = dueMinutes?.let { LocalTime.of(it / 60, it % 60) }
+    val deadline: LocalDate? get() = deadlineDate?.let { LocalDate.ofEpochDay(it) }
     val isRecurring: Boolean get() = recType != Recurrence.NONE
 
-    /** Moment the task is due. Date without time = end of that day. */
-    fun dueMillis(): Long? {
-        val d = date ?: return null
-        val t = time ?: LocalTime.of(23, 59, 59)
+    private fun at(d: LocalDate, minutes: Int?): Long {
+        val t = minutes?.let { LocalTime.of(it / 60, it % 60) } ?: LocalTime.of(23, 59, 59)
         return LocalDateTime.of(d, t).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
+    /** Start moment (date without time = end of that day, for sorting). */
+    fun dueMillis(): Long? = date?.let { at(it, dueMinutes) }
+
+    /** When it must be finished: the "Due by" if set, otherwise the end of the start day. */
+    fun deadlineMillis(): Long? = deadline?.let { at(it, deadlineMinutes) } ?: date?.let { at(it, null) }
+
+    /** Past the deadline and not done. */
     fun isOverdue(now: Long = System.currentTimeMillis()): Boolean {
         if (status != Status.PENDING) return false
-        val due = dueMillis() ?: return false
-        return due < now
+        val d = deadlineMillis() ?: return false
+        return d < now
+    }
+
+    /** Start time has passed but there is still time before the deadline. */
+    fun isNotStarted(now: Long = System.currentTimeMillis()): Boolean {
+        if (status != Status.PENDING || dueMinutes == null || isOverdue(now)) return false
+        val s = dueMillis() ?: return false
+        return s < now
     }
 }
 
@@ -96,6 +117,10 @@ data class SubtaskEntity(
     val title: String,
     val done: Boolean = false,
     val position: Int = 0,
+    /** Planned focus minutes for this step. */
+    @ColumnInfo(defaultValue = "0") val minutes: Int = 0,
+    /** Minutes actually spent in focus on this step. */
+    @ColumnInfo(defaultValue = "0") val focusedMinutes: Int = 0,
 )
 
 /** A reminder fires [offsetMinutes] before the task's due time. */
@@ -145,6 +170,7 @@ data class FocusSessionEntity(
     val title: String,
     val startedAt: Long,
     val minutes: Int,
+    val subtaskId: Long? = null,
 )
 
 data class TaskFull(

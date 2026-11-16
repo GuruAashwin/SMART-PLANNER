@@ -53,11 +53,19 @@ class MainActivity : ComponentActivity() {
         if (id > 0) openTask.value = id
         if (intent?.getBooleanExtra(EXTRA_QUICK_ADD, false) == true) openSpecial.value = "quickadd"
         if (intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true) openSpecial.value = "focus"
+        // "Start" on a start alert or reminder: begin focus on that task and show it.
+        val start = intent?.getLongExtra(EXTRA_START_FOCUS, 0L) ?: 0L
+        if (start > 0) {
+            intent?.removeExtra(EXTRA_START_FOCUS)
+            vm.startFocus(start, null)
+            openSpecial.value = "focus"
+        }
     }
 
     companion object {
         const val EXTRA_OPEN_TASK = "openTask"
         const val EXTRA_QUICK_ADD = "quickAdd"
         const val EXTRA_OPEN_FOCUS = "openFocus"
+        const val EXTRA_START_FOCUS = "startFocus"
     }
 }

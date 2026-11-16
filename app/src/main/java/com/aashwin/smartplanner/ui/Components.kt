@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
@@ -143,7 +144,10 @@ fun rememberTaskActions(vm: MainViewModel, onOpen: (Long) -> Unit, onFocus: (Lon
 fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifier: Modifier = Modifier) {
     val t = full.task
     val done = t.status != Status.PENDING
-    val overdue = t.isOverdue()
+    val now = System.currentTimeMillis()
+    val overdue = t.isOverdue(now)
+    val notStarted = t.isNotStarted(now)
+    val startable = !done && (t.dueDate == null || t.dueDate <= java.time.LocalDate.now().toEpochDay())
     var menu by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -163,7 +167,7 @@ fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifie
                     tint = if (t.priority == Priority.HIGH) MaterialTheme.colorScheme.primary else muted,
                 )
             }
-            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Column(Modifier.weight(1f).padding(end = if (startable) 0.dp else 12.dp)) {
                 Text(
                     t.title,
                     style = MaterialTheme.typography.bodyLarge,
@@ -172,10 +176,13 @@ fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifie
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val dueBy = t.deadline?.let { "due " + Fmt.due(it, t.deadlineMinutes) }
                     when {
-                        overdue -> Meta("Overdue · " + Fmt.due(t.date, t.dueMinutes), MaterialTheme.colorScheme.error, bold = true)
+                        overdue -> Meta("Overdue · " + (dueBy ?: Fmt.due(t.date, t.dueMinutes)), MaterialTheme.colorScheme.error, bold = true)
+                        notStarted -> Meta("Not started · " + Fmt.due(t.date, t.dueMinutes), MaterialTheme.colorScheme.primary, bold = true)
                         t.dueDate != null -> Meta(Fmt.due(t.date, t.dueMinutes))
                     }
+                    if (dueBy != null && !overdue && !done) Meta(dueBy)
                     if (!done) PriorityTag(t.priority)
                     if (categoryName != null) Meta(categoryName)
                     if (full.subtasks.isNotEmpty()) {
@@ -187,10 +194,13 @@ fun TaskRow(full: TaskFull, categoryName: String?, actions: TaskActions, modifie
                             modifier = Modifier.clickable { expanded = !expanded },
                         )
                     }
-                    if (t.alarmEnabled && !done) MetaIcon(Icons.Filled.Alarm, "Alarm")
+                    if (t.priority == Priority.HIGH && t.startAlert && t.dueMinutes != null && !done) MetaIcon(Icons.Filled.Alarm, "Full-screen start alert")
                     if (t.isRecurring) MetaIcon(Icons.Filled.Repeat, "Repeats")
                     if (!done && t.postponeCount >= 3) Meta("postponed ${t.postponeCount}×", MaterialTheme.colorScheme.primary)
                 }
+            }
+            if (startable) IconButton(onClick = { actions.focus(t.id) }) {
+                Icon(Icons.Filled.PlayArrow, "Start focus", tint = MaterialTheme.colorScheme.primary)
             }
         }
         if (expanded) {

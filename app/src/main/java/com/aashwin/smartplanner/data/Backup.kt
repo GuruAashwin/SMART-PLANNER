@@ -31,6 +31,8 @@ object Backup {
                     put("createdAt", t.createdAt); put("alarmEnabled", t.alarmEnabled)
                     put("recType", t.recType); put("recInterval", t.recInterval); put("recDays", t.recDays)
                     put("recAnchor", t.recAnchor)
+                    put("deadlineDate", t.deadlineDate ?: JSONObject.NULL); put("deadlineMinutes", t.deadlineMinutes ?: JSONObject.NULL)
+                    put("plannedMinutes", t.plannedMinutes ?: JSONObject.NULL); put("startAlert", t.startAlert)
                     put("postponeCount", t.postponeCount)
                 })
             }
@@ -40,6 +42,7 @@ object Backup {
                 put(JSONObject().apply {
                     put("id", s.id); put("taskId", s.taskId); put("title", s.title)
                     put("done", s.done); put("position", s.position)
+                    put("minutes", s.minutes); put("focusedMinutes", s.focusedMinutes)
                 })
             }
         })
@@ -86,11 +89,13 @@ object Backup {
                     alarmEnabled = o.optBoolean("alarmEnabled"), recType = o.optInt("recType"),
                     recInterval = o.optInt("recInterval", 1), recDays = o.optInt("recDays"),
                     recAnchor = o.optInt("recAnchor"),
+                    deadlineDate = o.optLongOrNull("deadlineDate"), deadlineMinutes = o.optIntOrNull("deadlineMinutes"),
+                    plannedMinutes = o.optIntOrNull("plannedMinutes"), startAlert = o.optBoolean("startAlert", true),
                     postponeCount = o.optInt("postponeCount"),
                 )
             },
             subtasks = root.optJSONArray("subtasks").mapObjects { o ->
-                SubtaskEntity(o.getLong("id"), o.getLong("taskId"), o.getString("title"), o.optBoolean("done"), o.optInt("position"))
+                SubtaskEntity(o.getLong("id"), o.getLong("taskId"), o.getString("title"), o.optBoolean("done"), o.optInt("position"), o.optInt("minutes"), o.optInt("focusedMinutes"))
             },
             reminders = root.optJSONArray("reminders").mapObjects { o ->
                 ReminderEntity(o.getLong("id"), o.getLong("taskId"), o.getInt("offsetMinutes"))

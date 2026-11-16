@@ -178,10 +178,13 @@ fun HomeScreen(vm: MainViewModel, onOpen: (Long) -> Unit, onOpenSettings: () -> 
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         val f = focus
-                        TextButton(onClick = { onFocus(d.next?.task?.id ?: -1L) }) {
+                        TextButton(onClick = { onFocus(if (f != null) -1L else d.next?.task?.id ?: -1L) }) {
                             Text(
-                                if (f != null) (if (f.isBreak) "Break running · open" else "Focus running · open")
-                                else "Start focus"
+                                when {
+                                    f == null -> if (d.next != null) "Start next now" else "Start focus"
+                                    f.phase == com.aashwin.smartplanner.data.FocusMachine.BREAK -> "On a break · open"
+                                    else -> "Focusing on ${f.step.title} · open"
+                                }
                             )
                         }
                     }

@@ -27,7 +27,7 @@ class PlannerApp : Application() {
         appScope.launch {
             repository.rollover()
             repository.rescheduleAll()
-            repository.finishFocus() // a session that ended while the phone was off
+            repository.restoreFocus() // a session whose timer ended while the phone was off
         }
         widgetRefresher()
     }

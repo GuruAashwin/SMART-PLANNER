@@ -121,7 +121,7 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit, ope
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!route.startsWith("edit") && !route.startsWith("focus")) {
+            if (!route.startsWith("edit") && !route.startsWith("focus") && route != "sounds") {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                     TABS.forEach { tab ->
                         NavigationBarItem(
@@ -153,12 +153,19 @@ fun AppRoot(vm: MainViewModel, openTaskId: Long?, onOpenHandled: () -> Unit, ope
             composable("calendar") {
                 CalendarScreen(vm, calendarDay, onSelect = { calendarDay = it }, onOpen = ::openEditor, onFocus = ::openFocus)
             }
-            composable("settings") { SettingsScreen(vm) }
+            composable("settings") {
+                SettingsScreen(vm, onSounds = { nav.navigate("sounds") }, onFocusMode = { nav.navigate("focusmode") })
+            }
+            composable("sounds") { SoundsScreen(vm, onBack = { nav.popBackStack() }) }
+            composable("focusmode") { FocusModeScreen(vm, onBack = { nav.popBackStack() }) }
             composable(
                 "focus?taskId={taskId}",
                 arguments = listOf(navArgument("taskId") { type = NavType.LongType; defaultValue = -1L }),
             ) { entry ->
-                FocusScreen(vm, entry.arguments?.getLong("taskId"), onClose = { nav.popBackStack() })
+                FocusScreen(
+                    vm, entry.arguments?.getLong("taskId"), onClose = { nav.popBackStack() },
+                    onSetupBlocker = { nav.navigate("focusmode") },
+                )
             }
             composable("edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                 val id = entry.arguments?.getLong("id") ?: 0L
